@@ -40,6 +40,9 @@ sha256sums=(
     'b71dfbd12cf27244f25bfa2ffcdb18327d2fd3c4cbf04d39da51fbb30d7d85a6'
     '0fc0ec6842aff43009cc7843f97f92ff0e278e30ea6bb29ac1e24b1cde977db6'
 )
+# Keep debug symbols on purpose: a compositor panic takes the whole session
+# down, and the journal backtrace is only readable with them (~128 MB binary
+# vs ~24 MB stripped). Prefer lean? Delete this line.
 options=('!strip')
 
 prepare() {
