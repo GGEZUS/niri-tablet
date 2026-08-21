@@ -1,0 +1,13 @@
+# Maintainer's local niri dev clone (rebase workspace; not part of the repo)
+/niri/
+
+# makepkg workspace: pkg/ builds from upstream + patches
+/pkg/src/
+/pkg/niri/
+/pkg/pkg/
+/pkg/*.pkg.tar.zst
+/pkg/*.src.tar.gz
+/pkg/*.sig
+
+# cargo
+/target/
