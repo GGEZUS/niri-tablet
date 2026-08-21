@@ -9,6 +9,9 @@ Built and daily-driven on a Microsoft Surface Go 2 running Arch Linux, and
 verified from a fresh install on a ThinkPad T480.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
+[![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%206%20patches-blueviolet)](#status--credits)
+[![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 
 ## Gestures
 
