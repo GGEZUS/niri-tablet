@@ -1,0 +1,354 @@
+From 0deb8e82fe6ceb49bd5bcf5268c6aa7124dc6939 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Thu, 20 Aug 2026 20:32:20 +0100
+Subject: [PATCH 5/6] feat(input): discrete 4-finger vertical swipe gestures
+
+A vertical swipe recognized with four or more fingers now runs a
+configurable action instead of driving the workspace carousel:
+
+    touchscreen-swipe {
+        swipe-4-down { close-window; }
+        swipe-4-up   { spawn-sh "wvkbd-deskintl -H 260"; }
+    }
+
+The action fires when the fingers lift; the grab swallows events for
+the rest of the gesture. When unset, 4-finger vertical swipes keep the
+carousel behavior. GestureEvent::Begin now reports the tracked finger
+count.
+
+Also: revert the vertical swipe to the original (touchpad-natural)
+direction after trying both on hardware.
+---
+ niri-config/src/gestures.rs      | 18 ++++++++
+ src/input/mod.rs                 | 47 +++++++++++++++----
+ src/input/touch_swipe_grab.rs    | 79 +++++++++++++++++++++++---------
+ src/input/touch_swipe_tracker.rs |  3 ++
+ 4 files changed, 118 insertions(+), 29 deletions(-)
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index ea196f91..d226cfcf 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -130,6 +130,12 @@ pub struct TouchscreenSwipe {
+     pub tap: Option<Action>,
+     /// Action for taps involving four or more fingers; overrides `tap` for those.
+     pub tap_4: Option<Action>,
++    /// Discrete action for a vertical swipe with four or more fingers
++    /// (downward). When unset, such swipes drive the workspace carousel.
++    pub swipe_4_down: Option<Action>,
++    /// Discrete action for a vertical swipe with four or more fingers
++    /// (upward). When unset, such swipes drive the workspace carousel.
++    pub swipe_4_up: Option<Action>,
+ }
+ 
+ impl Default for TouchscreenSwipe {
+@@ -139,6 +145,8 @@ impl Default for TouchscreenSwipe {
+             fingers: 3,
+             tap: Some(Action::MaximizeColumn),
+             tap_4: None,
++            swipe_4_down: None,
++            swipe_4_up: None,
+         }
+     }
+ }
+@@ -153,6 +161,10 @@ pub struct TouchscreenSwipePart {
+     pub tap: Option<TouchscreenTap>,
+     #[knuffel(child)]
+     pub tap_4: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub swipe_4_down: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub swipe_4_up: Option<TouchscreenTap>,
+ }
+ 
+ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+@@ -167,6 +179,12 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+         if let Some(tap_4) = &part.tap_4 {
+             self.tap_4 = Some(tap_4.action.clone());
+         }
++        if let Some(a) = &part.swipe_4_down {
++            self.swipe_4_down = Some(a.action.clone());
++        }
++        if let Some(a) = &part.swipe_4_up {
++            self.swipe_4_up = Some(a.action.clone());
++        }
+     }
+ }
+ 
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 4eb52b42..914fdffa 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4302,6 +4302,7 @@ impl State {
+                     direction,
+                     delta_x,
+                     delta_y,
++                    fingers,
+                     timestamp: ts,
+                 } = gesture_ev
+                 {
+@@ -4313,18 +4314,51 @@ impl State {
+                         if !dominated {
+                             if let Some((output, _)) = self.niri.output_under(pos) {
+                                 let output = output.clone();
+-                                let fingers =
+-                                    self.niri.config.borrow().gestures.touchscreen_swipe.fingers
+-                                        as usize;
++                                let touchscreen_swipe = self
++                                    .niri
++                                    .config
++                                    .borrow()
++                                    .gestures
++                                    .touchscreen_swipe
++                                    .clone();
++
++                                // Discrete 4+-finger vertical swipes: run a configured
++                                // action on completion instead of the animated gesture.
++                                let discrete_action = if fingers >= 4
++                                    && direction == SwipeDirection::Vertical
++                                {
++                                    if delta_y > 0.0 {
++                                        touchscreen_swipe.swipe_4_down.clone()
++                                    } else {
++                                        touchscreen_swipe.swipe_4_up.clone()
++                                    }
++                                } else {
++                                    None
++                                };
++
++                                let fingers_cfg = touchscreen_swipe.fingers as usize;
+                                 let tracker = std::mem::replace(
+                                     &mut self.niri.touch_swipe_tracker,
+-                                    crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(fingers),
++                                    crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(fingers_cfg),
+                                 );
+                                 let start_data = TouchGrabStartData {
+                                     focus: None,
+                                     slot,
+                                     location: pos,
+                                 };
++
++                                if let Some(action) = discrete_action {
++                                    let grab = TouchSwipeGrab::new_discrete(
++                                        start_data, output, tracker, action,
++                                    );
++                                    let serial = SERIAL_COUNTER.next_serial();
++                                    // Unset any existing implicit grab before setting ours.
++                                    handle.unset_grab(self);
++                                    handle.set_grab(self, grab, serial);
++                                    self.niri.touch_edge_swipe_tracker.reset();
++                                    return;
++                                }
++
+                                 let grab = TouchSwipeGrab::new(start_data, output.clone(), tracker);
+                                 let serial = SERIAL_COUNTER.next_serial();
+                                 // Unset any existing implicit grab before setting ours.
+@@ -4344,12 +4378,9 @@ impl State {
+                                         self.niri
+                                             .layout
+                                             .workspace_switch_gesture_begin(&output, false);
+-                                        // Direct manipulation on a touchscreen: the content
+-                                        // follows the finger (delta as-is, not negated like
+-                                        // the touchpad path).
+                                         self.niri
+                                             .layout
+-                                            .workspace_switch_gesture_update(delta_y, ts, false);
++                                            .workspace_switch_gesture_update(-delta_y, ts, false);
+                                     }
+                                 }
+                                 self.niri.queue_redraw_all();
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index c7759a97..ec480622 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -10,6 +10,7 @@ use smithay::utils::{Logical, Point, Serial};
+ 
+ use crate::input::touch_swipe_tracker::{GestureEvent, SwipeDirection, TouchSwipeGestureTracker};
+ use crate::niri::State;
++use niri_config::Action;
+ 
+ /// Gesture state for a 3-finger touchscreen swipe outside the overview.
+ ///
+@@ -23,6 +24,9 @@ enum GestureState {
+     ViewOffset,
+     /// Vertical swipe — drives `workspace_switch_gesture_*`.
+     WorkspaceSwitch,
++    /// Discrete gesture (4+-finger vertical swipe): swallow events and run the pending
++    /// action when the gesture completes.
++    Discrete,
+ }
+ 
+ pub struct TouchSwipeGrab {
+@@ -30,6 +34,8 @@ pub struct TouchSwipeGrab {
+     output: Output,
+     tracker: TouchSwipeGestureTracker,
+     gesture: GestureState,
++    /// Action to run when a discrete gesture completes.
++    pending_action: Option<Action>,
+ }
+ 
+ impl TouchSwipeGrab {
+@@ -52,6 +58,24 @@ impl TouchSwipeGrab {
+             output,
+             tracker,
+             gesture,
++            pending_action: None,
++        }
++    }
++
++    /// A discrete swipe gesture: no animated layout gesture, just swallow the touch
++    /// events and run `action` when the gesture ends.
++    pub fn new_discrete(
++        start_data: TouchGrabStartData<State>,
++        output: Output,
++        tracker: TouchSwipeGestureTracker,
++        action: Action,
++    ) -> Self {
++        Self {
++            start_data,
++            output,
++            tracker,
++            gesture: GestureState::Discrete,
++            pending_action: Some(action),
+         }
+     }
+ 
+@@ -60,25 +84,32 @@ impl TouchSwipeGrab {
+             return false;
+         };
+ 
+-        let layout = &mut data.niri.layout;
+-
+         match event {
+             GestureEvent::Begin {
+                 direction,
+                 delta_x,
+                 delta_y,
+                 timestamp,
++                ..
+             } => {
+                 match direction {
+                     SwipeDirection::Horizontal => {
+-                        layout.view_offset_gesture_begin(&self.output, None, false);
++                        data.niri
++                            .layout
++                            .view_offset_gesture_begin(&self.output, None, false);
+                         self.gesture = GestureState::ViewOffset;
+-                        layout.view_offset_gesture_update(-delta_x, timestamp, false);
++                        data.niri
++                            .layout
++                            .view_offset_gesture_update(-delta_x, timestamp, false);
+                     }
+                     SwipeDirection::Vertical => {
+-                        layout.workspace_switch_gesture_begin(&self.output, false);
++                        data.niri
++                            .layout
++                            .workspace_switch_gesture_begin(&self.output, false);
+                         self.gesture = GestureState::WorkspaceSwitch;
+-                        layout.workspace_switch_gesture_update(-delta_y, timestamp, false);
++                        data.niri
++                            .layout
++                            .workspace_switch_gesture_update(-delta_y, timestamp, false);
+                     }
+                 }
+                 data.niri.queue_redraw_all();
+@@ -89,14 +120,16 @@ impl TouchSwipeGrab {
+                 timestamp,
+             } => {
+                 let ongoing = match self.gesture {
+-                    GestureState::Recognizing => return false,
+-                    GestureState::ViewOffset => layout
++                    GestureState::Recognizing | GestureState::Discrete => return false,
++                    GestureState::ViewOffset => data
++                        .niri
++                        .layout
+                         .view_offset_gesture_update(-delta_x, timestamp, false)
+                         .is_some(),
+-                    // Direct manipulation on a touchscreen: the content follows the finger
+-                    // (delta as-is, not negated like the touchpad path).
+-                    GestureState::WorkspaceSwitch => layout
+-                        .workspace_switch_gesture_update(delta_y, timestamp, false)
++                    GestureState::WorkspaceSwitch => data
++                        .niri
++                        .layout
++                        .workspace_switch_gesture_update(-delta_y, timestamp, false)
+                         .is_some(),
+                 };
+ 
+@@ -110,11 +143,16 @@ impl TouchSwipeGrab {
+             GestureEvent::End { .. } => {
+                 match self.gesture {
+                     GestureState::Recognizing => {}
++                    GestureState::Discrete => {
++                        if let Some(action) = self.pending_action.take() {
++                            data.do_action(action, false);
++                        }
++                    }
+                     GestureState::ViewOffset => {
+-                        layout.view_offset_gesture_end(Some(false));
++                        data.niri.layout.view_offset_gesture_end(Some(false));
+                     }
+                     GestureState::WorkspaceSwitch => {
+-                        layout.workspace_switch_gesture_end(Some(false));
++                        data.niri.layout.workspace_switch_gesture_end(Some(false));
+                     }
+                 }
+                 data.niri.queue_redraw_all();
+@@ -125,12 +163,12 @@ impl TouchSwipeGrab {
+             }
+             GestureEvent::Cancel => {
+                 match self.gesture {
+-                    GestureState::Recognizing => {}
++                    GestureState::Recognizing | GestureState::Discrete => {}
+                     GestureState::ViewOffset => {
+-                        layout.view_offset_gesture_end(None);
++                        data.niri.layout.view_offset_gesture_end(None);
+                     }
+                     GestureState::WorkspaceSwitch => {
+-                        layout.workspace_switch_gesture_end(None);
++                        data.niri.layout.workspace_switch_gesture_end(None);
+                     }
+                 }
+                 data.niri.queue_redraw_all();
+@@ -142,14 +180,13 @@ impl TouchSwipeGrab {
+     }
+ 
+     fn on_ungrab(&mut self, data: &mut State) {
+-        let layout = &mut data.niri.layout;
+         match self.gesture {
+-            GestureState::Recognizing => {}
++            GestureState::Recognizing | GestureState::Discrete => {}
+             GestureState::ViewOffset => {
+-                layout.view_offset_gesture_end(Some(false));
++                data.niri.layout.view_offset_gesture_end(Some(false));
+             }
+             GestureState::WorkspaceSwitch => {
+-                layout.workspace_switch_gesture_end(Some(false));
++                data.niri.layout.workspace_switch_gesture_end(Some(false));
+             }
+         }
+         data.niri.queue_redraw_all();
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index abcf70cd..c18a2821 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -38,6 +38,8 @@ pub enum GestureEvent {
+         direction: SwipeDirection,
+         delta_x: f64,
+         delta_y: f64,
++        /// Number of fingers tracked when the gesture recognized.
++        fingers: usize,
+         timestamp: Duration,
+     },
+     Update {
+@@ -313,6 +315,7 @@ impl TouchSwipeGestureTracker {
+             direction: self.direction,
+             delta_x: dx,
+             delta_y: dy,
++            fingers: self.tracked_slots.len(),
+             timestamp,
+         })
+     }
+-- 
+2.55.0
+

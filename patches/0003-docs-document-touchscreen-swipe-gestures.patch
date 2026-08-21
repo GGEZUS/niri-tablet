@@ -1,0 +1,79 @@
+From aad4cdd01d3df38b4048a5d8da42701ffa6a9b31 Mon Sep 17 00:00:00 2001
+From: Mario St Jr <mariostjr@noctalia.dev>
+Date: Sun, 29 Mar 2026 12:17:38 -0300
+Subject: [PATCH 3/6] docs: document touchscreen swipe gestures
+
+Add touchscreen section to the Gestures wiki page and document the
+touchscreen-swipe configuration options.
+---
+ docs/wiki/Configuration:-Gestures.md | 27 +++++++++++++++++++++++++++
+ docs/wiki/Gestures.md                | 11 +++++++++++
+ 2 files changed, 38 insertions(+)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 24e2b2ae..b42992b6 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -28,6 +28,11 @@ gestures {
+         // bottom-left
+         // bottom-right
+     }
++
++    touchscreen-swipe {
++        fingers 3
++        // off
++    }
+ }
+ ```
+ 
+@@ -113,3 +118,25 @@ gestures {
+ ```
+ 
+ You can also customize hot corners per-output [in the output config](./Configuration:-Outputs.md#hot-corners).
++
++### `touchscreen-swipe`
++
++Three-finger swipe gestures on a touchscreen, replicating the touchpad behavior:
++- Vertical swipe to switch workspaces (continuous carousel).
++- Horizontal swipe to move the view.
++
++The gesture uses the same continuous animation and inertia as the touchpad swipe.
++
++The options are:
++
++- `fingers`: number of fingers required to trigger the gesture (default: 3).
++- `off`: disable touchscreen swipe gestures entirely.
++
++```kdl
++gestures {
++    // Disable touchscreen swipe gestures.
++    touchscreen-swipe {
++        off
++    }
++}
++```
+diff --git a/docs/wiki/Gestures.md b/docs/wiki/Gestures.md
+index 5c94d71f..204438e3 100644
+--- a/docs/wiki/Gestures.md
++++ b/docs/wiki/Gestures.md
+@@ -66,6 +66,17 @@ Move the view horizontally with three-finger horizontal swipes.
+ 
+ Open and close the overview with a four-finger vertical swipe.
+ 
++### Touchscreen
++
++#### Workspace Switch
++
++Switch workspaces with three-finger vertical swipes on the touchscreen.
++The gesture uses the same continuous carousel animation as the touchpad.
++
++#### Horizontal View Movement
++
++Move the view horizontally with three-finger horizontal swipes on the touchscreen.
++
+ ### All Pointing Devices
+ 
+ #### Drag-and-Drop Edge View Scroll
+-- 
+2.55.0
+

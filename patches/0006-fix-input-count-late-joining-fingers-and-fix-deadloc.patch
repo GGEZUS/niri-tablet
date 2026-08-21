@@ -1,0 +1,134 @@
+From c25fe50ad9bff78a20cf6877a192b714e406ad9d Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Thu, 20 Aug 2026 22:02:36 +0100
+Subject: [PATCH 6/6] fix(input): count late-joining fingers and fix deadlock
+ in discrete swipes
+
+- Fingers landing between the recognition threshold arming (3rd finger
+  down) and the movement threshold crossing now join the tracked set, so
+  a 4-finger swipe reports fingers=4 instead of 3 and correctly runs
+  swipe-4-up/down actions.
+- Discrete gesture grabs no longer run the action from inside the grab
+  callback: do_action() starts with touch.cancel(), which re-locks the
+  seat touch mutex already held during grab dispatch, deadlocking the
+  compositor (frozen session, hard reset required). The grab defers the
+  action to Niri::pending_touch_action, executed in on_touch_up after
+  the outer handle.up() (and its lock) returns.
+---
+ src/input/mod.rs                 |  8 +++++++-
+ src/input/touch_swipe_grab.rs    |  9 ++++++---
+ src/input/touch_swipe_tracker.rs | 15 ++++++++++++---
+ src/niri.rs                      |  4 ++++
+ 4 files changed, 29 insertions(+), 7 deletions(-)
+
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 914fdffa..9df20451 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4277,7 +4277,13 @@ impl State {
+                 serial,
+                 time: evt.time_msec(),
+             },
+-        )
++        );
++
++        // Run a deferred discrete-gesture action now that all grab callbacks
++        // (and the seat's touch lock) have returned.
++        if let Some(action) = self.niri.pending_touch_action.take() {
++            self.do_action(action, false);
++        }
+     }
+     fn on_touch_motion<I: InputBackend>(&mut self, evt: I::TouchMotionEvent) {
+         let Some(handle) = self.niri.seat.get_touch() else {
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index ec480622..3e8704a6 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -144,9 +144,12 @@ impl TouchSwipeGrab {
+                 match self.gesture {
+                     GestureState::Recognizing => {}
+                     GestureState::Discrete => {
+-                        if let Some(action) = self.pending_action.take() {
+-                            data.do_action(action, false);
+-                        }
++                        // Do NOT run the action here: we are inside a grab
++                        // callback, with the seat's touch mutex held, and
++                        // do_action() -> touch.cancel() would deadlock on it.
++                        // Defer to on_touch_up, which runs after the lock is
++                        // released.
++                        data.niri.pending_touch_action = self.pending_action.take();
+                     }
+                     GestureState::ViewOffset => {
+                         data.niri.layout.view_offset_gesture_end(Some(false));
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index c18a2821..d540ae59 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -144,7 +144,7 @@ impl TouchSwipeGestureTracker {
+ 
+         // Transition from Idle to Recognizing once we have enough fingers.
+         if self.phase == Phase::Idle && self.slots.len() >= self.min_fingers {
+-            trace!(
++            debug!(
+                 "touch_swipe: entering recognizing phase with {} slots",
+                 self.slots.len()
+             );
+@@ -152,6 +152,12 @@ impl TouchSwipeGestureTracker {
+             self.tracked_slots = self.slots.keys().copied().collect();
+             self.start_positions = self.slots.clone();
+             self.prev_centroid = self.centroid_of_tracked();
++        } else if self.phase == Phase::Recognizing {
++            // An additional finger landing before the movement threshold is
++            // crossed joins the gesture (it counts toward the reported finger
++            // count and the centroid).
++            self.tracked_slots.push(slot);
++            self.start_positions.insert(slot, pos);
+         }
+ 
+         None
+@@ -561,7 +567,7 @@ mod tests {
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+-        // 4th finger during recognizing phase is fine — it gets added to tracked_slots.
++        // 4th finger during recognizing phase joins the tracked slots.
+         tracker.touch_down(slot(3), pt(130.0, 100.0), ts(5));
+ 
+         // Move all right past threshold.
+@@ -571,7 +577,10 @@ mod tests {
+         let ev = tracker.touch_motion(slot(3), pt(150.0, 100.0), ts(10));
+ 
+         // Should recognize with all 4 fingers being tracked.
+-        assert!(ev.is_some() || tracker.is_active());
++        match ev {
++            Some(GestureEvent::Begin { fingers, .. }) => assert_eq!(fingers, 4),
++            _ => panic!("expected Begin with 4 fingers"),
++        }
+     }
+ 
+     #[test]
+diff --git a/src/niri.rs b/src/niri.rs
+index 026e62c0..c26ab9f6 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -372,6 +372,9 @@ pub struct Niri {
+     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
+     pub touch_swipe_tracker: crate::input::touch_swipe_tracker::TouchSwipeGestureTracker,
+     pub touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker,
++    /// Action deferred by a discrete touch gesture grab, to be run from
++    /// `on_touch_up` after all grab callbacks (and their locks) have returned.
++    pub pending_touch_action: Option<niri_config::Action>,
+     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
+     pub vertical_wheel_tracker: ScrollTracker,
+     pub horizontal_wheel_tracker: ScrollTracker,
+@@ -2587,6 +2590,7 @@ impl Niri {
+                 3,
+             ),
+             touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker::default(),
++            pending_touch_action: None,
+             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
+             vertical_wheel_tracker: ScrollTracker::new(120),
+             horizontal_wheel_tracker: ScrollTracker::new(120),
+-- 
+2.55.0
+

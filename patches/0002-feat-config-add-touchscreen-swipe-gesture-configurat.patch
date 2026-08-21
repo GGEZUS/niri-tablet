@@ -1,0 +1,113 @@
+From 10893d32b92221379144b5633999ba7a375e9495 Mon Sep 17 00:00:00 2001
+From: Mario St Jr <mariostjr@noctalia.dev>
+Date: Sun, 29 Mar 2026 12:17:34 -0300
+Subject: [PATCH 2/6] feat(config): add touchscreen-swipe gesture configuration
+
+Add configurable touchscreen swipe settings to the gestures block:
+
+    gestures {
+        touchscreen-swipe {
+            fingers 3
+            // off
+        }
+    }
+
+Enabled by default with 3 fingers. Can be disabled with the off flag.
+The finger count is wired to the gesture tracker at runtime.
+---
+ niri-config/src/gestures.rs | 36 ++++++++++++++++++++++++++++++++++++
+ niri-config/src/lib.rs      |  6 +++++-
+ 2 files changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index dcf296ac..af85488d 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -6,6 +6,7 @@ pub struct Gestures {
+     pub dnd_edge_view_scroll: DndEdgeViewScroll,
+     pub dnd_edge_workspace_switch: DndEdgeWorkspaceSwitch,
+     pub hot_corners: HotCorners,
++    pub touchscreen_swipe: TouchscreenSwipe,
+ }
+ 
+ #[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
+@@ -16,6 +17,8 @@ pub struct GesturesPart {
+     pub dnd_edge_workspace_switch: Option<DndEdgeWorkspaceSwitchPart>,
+     #[knuffel(child)]
+     pub hot_corners: Option<HotCorners>,
++    #[knuffel(child)]
++    pub touchscreen_swipe: Option<TouchscreenSwipePart>,
+ }
+ 
+ impl MergeWith<GesturesPart> for Gestures {
+@@ -24,6 +27,7 @@ impl MergeWith<GesturesPart> for Gestures {
+             (self, part),
+             dnd_edge_view_scroll,
+             dnd_edge_workspace_switch,
++            touchscreen_swipe,
+         );
+         merge_clone!((self, part), hot_corners);
+     }
+@@ -110,3 +114,35 @@ pub struct HotCorners {
+     #[knuffel(child)]
+     pub bottom_right: bool,
+ }
++
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub struct TouchscreenSwipe {
++    pub off: bool,
++    pub fingers: u8,
++}
++
++impl Default for TouchscreenSwipe {
++    fn default() -> Self {
++        Self {
++            off: false,
++            fingers: 3,
++        }
++    }
++}
++
++#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
++pub struct TouchscreenSwipePart {
++    #[knuffel(child)]
++    pub off: bool,
++    #[knuffel(child, unwrap(argument))]
++    pub fingers: Option<u8>,
++}
++
++impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
++    fn merge_with(&mut self, part: &TouchscreenSwipePart) {
++        if part.off {
++            self.off = true;
++        }
++        merge_clone!((self, part), fingers);
++    }
++}
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 329b7669..d359e6c4 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -49,7 +49,7 @@ pub use crate::appearance::*;
+ pub use crate::binds::*;
+ pub use crate::debug::Debug;
+ pub use crate::error::{ConfigIncludeError, ConfigParseResult};
+-pub use crate::gestures::Gestures;
++pub use crate::gestures::{Gestures, TouchscreenSwipe};
+ pub use crate::input::{Input, ModKey, ScrollMethod, TrackLayout, WarpMouseToFocusMode, Xkb};
+ pub use crate::layer_rule::LayerRule;
+ pub use crate::layout::*;
+@@ -1661,6 +1661,10 @@ mod tests {
+                     bottom_left: false,
+                     bottom_right: false,
+                 },
++                touchscreen_swipe: TouchscreenSwipe {
++                    off: false,
++                    fingers: 3,
++                },
+             },
+             overview: Overview {
+                 zoom: 0.5,
+-- 
+2.55.0
+

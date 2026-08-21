@@ -1,0 +1,85 @@
+# niri-tablet — niri with the touchscreen gesture patchset.
+#
+# Builds from the upstream niri release + the patch series in ../patches/.
+# Maintainer flow (repo root): ./update.sh (rebase, regen patches, rebuild)
+# or ./install.sh (regen patches from the current branch, rebuild).
+#
+# NB: makepkg's exported flags are deliberately unset in build() — with
+# rustc's default lld they break linking of the libspa static C shim.
+pkgname=niri-tablet
+pkgver=26.04.6.gc25fe50a
+pkgrel=1
+pkgdesc='A scrollable-tiling Wayland compositor, with touchscreen gestures'
+url='https://github.com/GGEZUS/niri-tablet'
+arch=('x86_64' 'aarch64')
+license=('GPL-3.0-only')
+depends=('cairo' 'glib2' 'glibc' 'libdisplay-info' 'libgcc' 'libinput' 'libpipewire'
+         'libxkbcommon' 'mesa' 'pango' 'pixman' 'seatd' 'systemd-libs'
+         'xdg-desktop-portal-impl')
+makedepends=('cargo' 'rust' 'clang' 'git')
+provides=('niri')
+conflicts=('niri')
+_tag=v26.04  # upstream release the patchset is rebased onto
+source=(
+    "git+https://github.com/niri-wm/niri#tag=${_tag}"
+    '../patches/0001-feat-input-add-touchscreen-3-finger-swipe-gestures.patch'
+    '../patches/0002-feat-config-add-touchscreen-swipe-gesture-configurat.patch'
+    '../patches/0003-docs-document-touchscreen-swipe-gestures.patch'
+    '../patches/0004-feat-input-touchscreen-tap-and-bottom-edge-swipe-ges.patch'
+    '../patches/0005-feat-input-discrete-4-finger-vertical-swipe-gestures.patch'
+    '../patches/0006-fix-input-count-late-joining-fingers-and-fix-deadloc.patch'
+)
+sha256sums=(
+    'SKIP'
+    '21cb6a0b9c7d44fd01f776062c2532d664b71e5f1fee15fdff7da01f550ebb01'
+    '5fd416bcfaa66ce12f4d7049958c8b077977f1e8463b99f0a9bc2094bd2320a3'
+    'b3d5e3c4f92fede85ae8d99d58e6f1f01b3d0c13f40fe1af5328f84caf439634'
+    'a44ad809d3ed40b5f2044167a3af557919660b7cdbcf67ca819eb74422a9a13e'
+    'b71dfbd12cf27244f25bfa2ffcdb18327d2fd3c4cbf04d39da51fbb30d7d85a6'
+    '0fc0ec6842aff43009cc7843f97f92ff0e278e30ea6bb29ac1e24b1cde977db6'
+)
+options=('!strip')
+
+prepare() {
+    cd niri
+    local src
+    for src in "${source[@]}"; do
+        case "$src" in
+            *.patch) msg2 "Applying $src"; patch -Np1 < "$srcdir/$(basename "$src")" ;;
+        esac
+    done
+}
+
+build() {
+    cd niri
+    # Plain cargo, as in the known-good direct builds (see header note).
+    # Shared, overridable target dir keeps local rebuilds incremental.
+    unset CFLAGS CXXFLAGS LDFLAGS RUSTFLAGS
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/niri-tablet-target}"
+    cargo build --frozen --release
+}
+
+package() {
+    cd niri
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/niri-tablet-target}"
+
+    install -Dm755 "$CARGO_TARGET_DIR/release/niri" -t "$pkgdir/usr/bin/"
+    install -Dm755 resources/niri-session -t "$pkgdir/usr/bin/"
+    install -Dm644 resources/niri.service resources/niri-shutdown.target \
+        -t "$pkgdir/usr/lib/systemd/user/"
+    install -Dm644 resources/niri.desktop -t "$pkgdir/usr/share/wayland-sessions/"
+    install -Dm644 resources/niri-portals.conf \
+        -t "$pkgdir/usr/share/xdg-desktop-portal/"
+    install -Dm644 resources/default-config.kdl README.md \
+        -t "$pkgdir/usr/share/doc/$pkgname/"
+
+    mkdir -p "$pkgdir/usr/share/bash-completion/completions" \
+        "$pkgdir/usr/share/zsh/site-functions" \
+        "$pkgdir/usr/share/fish/vendor_completions.d"
+    "$CARGO_TARGET_DIR/release/niri" completions bash \
+        > "$pkgdir/usr/share/bash-completion/completions/niri"
+    "$CARGO_TARGET_DIR/release/niri" completions zsh \
+        > "$pkgdir/usr/share/zsh/site-functions/_niri"
+    "$CARGO_TARGET_DIR/release/niri" completions fish \
+        > "$pkgdir/usr/share/fish/vendor_completions.d/niri.fish"
+}

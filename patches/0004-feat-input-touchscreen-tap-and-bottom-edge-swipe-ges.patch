@@ -1,0 +1,970 @@
+From bd56eddbbfbf10efb3a6b1cd021292830714f155 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Thu, 20 Aug 2026 18:05:36 +0100
+Subject: [PATCH 4/6] feat(input): touchscreen tap and bottom-edge swipe
+ gestures
+
+Extend the touchscreen swipe patchset:
+
+- 3-finger tap: all fingers down and up within 250ms without crossing
+  the swipe threshold runs a configurable action (default:
+  maximize-column). `tap-4 { ... }` overrides the action for taps with
+  four or more fingers.
+- Bottom-edge swipe: single finger starting within 48px of the bottom
+  edge moving up past 40px runs a configurable spawn command
+  (`touchscreen-edge-swipe`, default off). A grab swallows the rest of
+  the gesture so surfaces under the finger don't get a stray drag.
+- Vertical swipe is now direct manipulation on touchscreens: content
+  follows the finger, instead of the touchpad-natural direction.
+- debug-level logging for gesture decisions (niri builds with
+  max_level_debug, so trace! was compiled out).
+---
+ niri-config/src/gestures.rs      |  83 ++++++++++-
+ src/input/mod.rs                 | 107 +++++++++++++-
+ src/input/touch_edge_swipe.rs    | 240 +++++++++++++++++++++++++++++++
+ src/input/touch_swipe_grab.rs    |  10 +-
+ src/input/touch_swipe_tracker.rs | 166 +++++++++++++++------
+ src/layout/mod.rs                |   2 +-
+ src/niri.rs                      |   2 +
+ 7 files changed, 555 insertions(+), 55 deletions(-)
+ create mode 100644 src/input/touch_edge_swipe.rs
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index af85488d..ea196f91 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -1,15 +1,18 @@
+-use crate::utils::MergeWith;
++use crate::binds::Action;
++use crate::utils::{expect_only_children, MergeWith};
+ use crate::FloatOrInt;
++use knuffel::errors::DecodeError;
+ 
+-#[derive(Debug, Default, Clone, Copy, PartialEq)]
++#[derive(Debug, Default, Clone, PartialEq)]
+ pub struct Gestures {
+     pub dnd_edge_view_scroll: DndEdgeViewScroll,
+     pub dnd_edge_workspace_switch: DndEdgeWorkspaceSwitch,
+     pub hot_corners: HotCorners,
+     pub touchscreen_swipe: TouchscreenSwipe,
++    pub touchscreen_edge_swipe: TouchscreenEdgeSwipe,
+ }
+ 
+-#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+ pub struct GesturesPart {
+     #[knuffel(child)]
+     pub dnd_edge_view_scroll: Option<DndEdgeViewScrollPart>,
+@@ -19,6 +22,8 @@ pub struct GesturesPart {
+     pub hot_corners: Option<HotCorners>,
+     #[knuffel(child)]
+     pub touchscreen_swipe: Option<TouchscreenSwipePart>,
++    #[knuffel(child)]
++    pub touchscreen_edge_swipe: Option<TouchscreenEdgeSwipe>,
+ }
+ 
+ impl MergeWith<GesturesPart> for Gestures {
+@@ -30,6 +35,7 @@ impl MergeWith<GesturesPart> for Gestures {
+             touchscreen_swipe,
+         );
+         merge_clone!((self, part), hot_corners);
++        merge_clone!((self, part), touchscreen_edge_swipe);
+     }
+ }
+ 
+@@ -115,10 +121,15 @@ pub struct HotCorners {
+     pub bottom_right: bool,
+ }
+ 
+-#[derive(Debug, Clone, Copy, PartialEq)]
++#[derive(Debug, Clone, PartialEq)]
+ pub struct TouchscreenSwipe {
+     pub off: bool,
+     pub fingers: u8,
++    /// Action performed on a quick multi-finger tap: all fingers down and up
++    /// within a short window, without enough movement to become a swipe.
++    pub tap: Option<Action>,
++    /// Action for taps involving four or more fingers; overrides `tap` for those.
++    pub tap_4: Option<Action>,
+ }
+ 
+ impl Default for TouchscreenSwipe {
+@@ -126,16 +137,22 @@ impl Default for TouchscreenSwipe {
+         Self {
+             off: false,
+             fingers: 3,
++            tap: Some(Action::MaximizeColumn),
++            tap_4: None,
+         }
+     }
+ }
+ 
+-#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+ pub struct TouchscreenSwipePart {
+     #[knuffel(child)]
+     pub off: bool,
+     #[knuffel(child, unwrap(argument))]
+     pub fingers: Option<u8>,
++    #[knuffel(child)]
++    pub tap: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub tap_4: Option<TouchscreenTap>,
+ }
+ 
+ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+@@ -144,5 +161,61 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+             self.off = true;
+         }
+         merge_clone!((self, part), fingers);
++        if let Some(tap) = &part.tap {
++            self.tap = Some(tap.action.clone());
++        }
++        if let Some(tap_4) = &part.tap_4 {
++            self.tap_4 = Some(tap_4.action.clone());
++        }
+     }
+ }
++
++/// Action bound to the touchscreen tap gesture, e.g. `tap { maximize-column; }`.
++#[derive(Debug, Clone, PartialEq)]
++pub struct TouchscreenTap {
++    pub action: Action,
++}
++
++impl<S> knuffel::Decode<S> for TouchscreenTap
++where
++    S: knuffel::traits::ErrorSpan,
++{
++    fn decode_node(
++        node: &knuffel::ast::SpannedNode<S>,
++        ctx: &mut knuffel::decode::Context<S>,
++    ) -> Result<Self, DecodeError<S>> {
++        expect_only_children(node, ctx);
++
++        let mut children = node.children();
++        let Some(child) = children.next() else {
++            return Err(DecodeError::missing(node, "expected an action node"));
++        };
++        for unwanted_child in children {
++            ctx.emit_error(DecodeError::unexpected(
++                unwanted_child,
++                "node",
++                "only one action is allowed",
++            ));
++        }
++
++        let action = <Action as knuffel::Decode<S>>::decode_node(child, ctx)?;
++        Ok(Self { action })
++    }
++}
++
++/// One-finger swipe up from the bottom screen edge. Disabled while `spawn` is
++/// empty. Plain taps (without movement) are not intercepted, so buttons in the
++/// bottom edge zone keep working.
++///
++/// ```kdl
++/// gestures {
++///     touchscreen-edge-swipe {
++///         spawn "noctalia" "msg" "panel-toggle" "launcher";
++///     }
++/// }
++/// ```
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenEdgeSwipe {
++    #[knuffel(child, unwrap(arguments))]
++    pub spawn: Vec<String>,
++}
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index b11a168b..4eb52b42 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -38,6 +38,7 @@ use smithay::utils::{Logical, Point, Rectangle, Transform, SERIAL_COUNTER};
+ use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
+ use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint};
+ use smithay::wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait};
++use touch_edge_swipe::EdgeSwipeGrab;
+ use touch_overview_grab::TouchOverviewGrab;
+ use touch_swipe_grab::TouchSwipeGrab;
+ use touch_swipe_tracker::{GestureEvent, SwipeDirection};
+@@ -66,6 +67,7 @@ pub mod scroll_swipe_gesture;
+ pub mod scroll_tracker;
+ pub mod spatial_movement_grab;
+ pub mod swipe_tracker;
++pub mod touch_edge_swipe;
+ pub mod touch_overview_grab;
+ pub mod touch_resize_grab;
+ pub mod touch_swipe_grab;
+@@ -4071,7 +4073,30 @@ impl State {
+ 
+         // Always feed touchscreen swipe gesture tracker — we need to track all
+         // fingers even when smithay has an implicit touch grab on the surface.
+-        self.niri.touch_swipe_tracker.touch_down(slot, pos);
++        self.niri
++            .touch_swipe_tracker
++            .touch_down(slot, pos, Duration::from_micros(evt.time()));
++
++        // Feed the bottom-edge swipe tracker (e.g. launcher gesture).
++        if !self
++            .niri
++            .config
++            .borrow()
++            .gestures
++            .touchscreen_edge_swipe
++            .spawn
++            .is_empty()
++            && !self.niri.screenshot_ui.is_open()
++            && !self.niri.window_mru_ui.is_open()
++        {
++            if let Some((output, _)) = self.niri.output_under(pos) {
++                let geom = self.niri.global_space.output_geometry(&output).unwrap();
++                let bottom_edge_y = f64::from(geom.loc.y) + f64::from(geom.size.h);
++                self.niri
++                    .touch_edge_swipe_tracker
++                    .touch_down(slot, pos, bottom_edge_y);
++            }
++        }
+ 
+         let serial = SERIAL_COUNTER.next_serial();
+ 
+@@ -4201,9 +4226,40 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
+-        // Always feed touchscreen swipe gesture tracker.
++        // Always feed touchscreen swipe gesture tracker; run the tap action on a
++        // quick multi-finger tap.
+         let timestamp = Duration::from_micros(evt.time());
+-        self.niri.touch_swipe_tracker.touch_up(slot, timestamp);
++        if let Some(GestureEvent::Tap { fingers, .. }) =
++            self.niri.touch_swipe_tracker.touch_up(slot, timestamp)
++        {
++            let touchscreen_swipe = self
++                .niri
++                .config
++                .borrow()
++                .gestures
++                .touchscreen_swipe
++                .clone();
++            let dominated = self.niri.screenshot_ui.is_open()
++                || self.niri.window_mru_ui.is_open()
++                || self.niri.layout.is_overview_open();
++            if !touchscreen_swipe.off && !dominated {
++                // Four-or-more-finger taps get their own action when configured.
++                let action = if fingers >= 4 {
++                    touchscreen_swipe
++                        .tap_4
++                        .clone()
++                        .or(touchscreen_swipe.tap.clone())
++                } else {
++                    touchscreen_swipe.tap.clone()
++                };
++                if let Some(action) = action {
++                    self.do_action(action, false);
++                }
++            }
++        }
++
++        // Bottom-edge swipe tracker.
++        self.niri.touch_edge_swipe_tracker.touch_up(slot);
+ 
+         if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
+             if capture {
+@@ -4288,12 +4344,16 @@ impl State {
+                                         self.niri
+                                             .layout
+                                             .workspace_switch_gesture_begin(&output, false);
++                                        // Direct manipulation on a touchscreen: the content
++                                        // follows the finger (delta as-is, not negated like
++                                        // the touchpad path).
+                                         self.niri
+                                             .layout
+-                                            .workspace_switch_gesture_update(-delta_y, ts, false);
++                                            .workspace_switch_gesture_update(delta_y, ts, false);
+                                     }
+                                 }
+                                 self.niri.queue_redraw_all();
++                                self.niri.touch_edge_swipe_tracker.reset();
+                                 return;
+                             }
+                         }
+@@ -4302,6 +4362,45 @@ impl State {
+             }
+         }
+ 
++        // Bottom-edge swipe (e.g. launcher gesture).
++        if self.niri.touch_edge_swipe_tracker.touch_motion(slot, pos) {
++            let dominated = self.niri.screenshot_ui.is_open() || self.niri.window_mru_ui.is_open();
++            if dominated {
++                self.niri.touch_edge_swipe_tracker.reset();
++            } else {
++                let spawn_cmd = self
++                    .niri
++                    .config
++                    .borrow()
++                    .gestures
++                    .touchscreen_edge_swipe
++                    .spawn
++                    .clone();
++
++                // do_action() cancels active touches, releasing any grabs;
++                // run it before installing the swallow grab below.
++                if !spawn_cmd.is_empty() {
++                    self.do_action(Action::Spawn(spawn_cmd), false);
++                }
++
++                // Swallow the rest of this gesture so surfaces under the finger
++                // don't receive a stray drag.
++                let start_data = TouchGrabStartData {
++                    focus: None,
++                    slot,
++                    location: pos,
++                };
++                let grab = EdgeSwipeGrab::new(start_data, slot);
++                let serial = SERIAL_COUNTER.next_serial();
++                handle.unset_grab(self);
++                handle.set_grab(self, grab, serial);
++
++                // We're using touch, hide the pointer.
++                self.niri.pointer_visibility = PointerVisibility::Disabled;
++                return;
++            }
++        }
++
+         if let Some(output) = self.niri.screenshot_ui.selection_output().cloned() {
+             let geom = self.niri.global_space.output_geometry(&output).unwrap();
+             let mut point = (pos - geom.loc.to_f64())
+diff --git a/src/input/touch_edge_swipe.rs b/src/input/touch_edge_swipe.rs
+new file mode 100644
+index 00000000..800ee3d5
+--- /dev/null
++++ b/src/input/touch_edge_swipe.rs
+@@ -0,0 +1,240 @@
++//! Bottom-edge swipe gesture.
++//!
++//! A single finger starting within `EDGE_ZONE_PX` of the bottom screen edge and swiping upward
++//! past `TRIGGER_PX` fires a configured command (e.g. the app launcher). A grab swallows the
++//! remaining touch events so surfaces under the finger don't receive a stray drag.
++
++use smithay::backend::input::TouchSlot;
++use smithay::input::touch::{
++    DownEvent, GrabStartData as TouchGrabStartData, MotionEvent, OrientationEvent, ShapeEvent,
++    TouchGrab, TouchInnerHandle, UpEvent,
++};
++use smithay::input::SeatHandler;
++use smithay::utils::{Logical, Point, Serial};
++
++use crate::niri::State;
++
++/// How close to the bottom edge (logical pixels) a touch must start.
++const EDGE_ZONE_PX: f64 = 48.0;
++
++/// Upward movement (logical pixels) required to trigger the gesture.
++const TRIGGER_PX: f64 = 40.0;
++
++#[derive(Debug, Default)]
++pub struct EdgeSwipeTracker {
++    /// The tracked finger, if a single-finger edge gesture is in progress.
++    slot: Option<TouchSlot>,
++    /// Where the tracked finger started.
++    start: Point<f64, Logical>,
++    /// Logical Y coordinate of the bottom edge of the output where tracking started.
++    bottom_edge_y: f64,
++    /// Whether the gesture already fired; further motion is ignored until the finger lifts.
++    latched: bool,
++}
++
++impl EdgeSwipeTracker {
++    pub fn touch_down(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, bottom_edge_y: f64) {
++        if self.slot.is_some() {
++            // A second finger landed; this is not a clean single-finger gesture.
++            self.slot = None;
++            return;
++        }
++
++        if pos.y >= bottom_edge_y - EDGE_ZONE_PX {
++            debug!(
++                "touch_edge_swipe: tracking from y={:.0} (bottom edge at {:.0})",
++                pos.y, bottom_edge_y
++            );
++            self.slot = Some(slot);
++            self.start = pos;
++            self.bottom_edge_y = bottom_edge_y;
++            self.latched = false;
++        } else if pos.y >= bottom_edge_y - EDGE_ZONE_PX * 2.0 {
++            debug!(
++                "touch_edge_swipe: near-miss start y={:.0} (zone starts at {:.0})",
++                pos.y,
++                bottom_edge_y - EDGE_ZONE_PX
++            );
++        }
++    }
++
++    /// Feed finger motion; returns `true` exactly once when the upward swipe triggers.
++    pub fn touch_motion(&mut self, slot: TouchSlot, pos: Point<f64, Logical>) -> bool {
++        if self.slot != Some(slot) || self.latched {
++            return false;
++        }
++
++        let dx = pos.x - self.start.x;
++        let dy = pos.y - self.start.y;
++
++        if dy <= -TRIGGER_PX && dy.abs() >= dx.abs() {
++            self.latched = true;
++            debug!("touch_edge_swipe: bottom edge swipe triggered");
++            return true;
++        }
++
++        false
++    }
++
++    pub fn touch_up(&mut self, slot: TouchSlot) {
++        if self.slot == Some(slot) {
++            self.slot = None;
++        }
++    }
++
++    /// Drop any in-progress tracking.
++    pub fn reset(&mut self) {
++        self.slot = None;
++    }
++}
++
++/// Swallows touch events for the remainder of an edge swipe so surfaces under the finger don't
++/// receive a stray drag after the gesture fires.
++pub struct EdgeSwipeGrab {
++    start_data: TouchGrabStartData<State>,
++    slot: TouchSlot,
++}
++
++impl EdgeSwipeGrab {
++    pub fn new(start_data: TouchGrabStartData<State>, slot: TouchSlot) -> Self {
++        Self { start_data, slot }
++    }
++}
++
++impl TouchGrab<State> for EdgeSwipeGrab {
++    fn down(
++        &mut self,
++        _data: &mut State,
++        _handle: &mut TouchInnerHandle<'_, State>,
++        _focus: Option<(<State as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
++        _event: &DownEvent,
++        _seq: Serial,
++    ) {
++        // Swallowed.
++    }
++
++    fn up(
++        &mut self,
++        data: &mut State,
++        handle: &mut TouchInnerHandle<'_, State>,
++        event: &UpEvent,
++        _seq: Serial,
++    ) {
++        // Swallowed; release the grab when the initiating finger lifts.
++        if event.slot == self.slot {
++            handle.unset_grab(self, data);
++        }
++    }
++
++    fn motion(
++        &mut self,
++        _data: &mut State,
++        _handle: &mut TouchInnerHandle<'_, State>,
++        _focus: Option<(<State as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
++        _event: &MotionEvent,
++        _seq: Serial,
++    ) {
++        // Swallowed.
++    }
++
++    fn frame(
++        &mut self,
++        _data: &mut State,
++        _handle: &mut TouchInnerHandle<'_, State>,
++        _seq: Serial,
++    ) {
++        // Swallowed.
++    }
++
++    fn cancel(
++        &mut self,
++        data: &mut State,
++        handle: &mut TouchInnerHandle<'_, State>,
++        _seq: Serial,
++    ) {
++        handle.unset_grab(self, data);
++    }
++
++    fn shape(
++        &mut self,
++        _data: &mut State,
++        _handle: &mut TouchInnerHandle<'_, State>,
++        _event: &ShapeEvent,
++        _seq: Serial,
++    ) {
++        // Swallowed.
++    }
++
++    fn orientation(
++        &mut self,
++        _data: &mut State,
++        _handle: &mut TouchInnerHandle<'_, State>,
++        _event: &OrientationEvent,
++        _seq: Serial,
++    ) {
++        // Swallowed.
++    }
++
++    fn start_data(&self) -> &TouchGrabStartData<State> {
++        &self.start_data
++    }
++
++    fn unset(&mut self, _data: &mut State) {}
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn slot(id: u32) -> TouchSlot {
++        TouchSlot::from(Some(id))
++    }
++
++    fn pt(x: f64, y: f64) -> Point<f64, Logical> {
++        Point::from((x, y))
++    }
++
++    #[test]
++    fn swipe_up_from_bottom_edge_triggers() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
++        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1240.0)));
++        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++        // Latched: no second trigger.
++        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1000.0)));
++    }
++
++    #[test]
++    fn swipe_down_or_sideways_does_not_trigger() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
++        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1300.0)));
++        // Mostly-horizontal movement past the threshold.
++        assert!(!tracker.touch_motion(slot(0), pt(700.0, 1240.0)));
++    }
++
++    #[test]
++    fn touch_outside_edge_zone_ignored() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1000.0), 1280.0);
++        assert!(!tracker.touch_motion(slot(0), pt(500.0, 900.0)));
++    }
++
++    #[test]
++    fn second_finger_aborts() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
++        tracker.touch_down(slot(1), pt(600.0, 1270.0), 1280.0);
++        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1200.0)));
++    }
++
++    #[test]
++    fn rearms_after_finger_lifts() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
++        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++        tracker.touch_up(slot(0));
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
++        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++    }
++}
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index 23dafcc6..c7759a97 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -93,8 +93,10 @@ impl TouchSwipeGrab {
+                     GestureState::ViewOffset => layout
+                         .view_offset_gesture_update(-delta_x, timestamp, false)
+                         .is_some(),
++                    // Direct manipulation on a touchscreen: the content follows the finger
++                    // (delta as-is, not negated like the touchpad path).
+                     GestureState::WorkspaceSwitch => layout
+-                        .workspace_switch_gesture_update(-delta_y, timestamp, false)
++                        .workspace_switch_gesture_update(delta_y, timestamp, false)
+                         .is_some(),
+                 };
+ 
+@@ -118,6 +120,9 @@ impl TouchSwipeGrab {
+                 data.niri.queue_redraw_all();
+                 return true;
+             }
++            GestureEvent::Tap { .. } => {
++                // Taps cannot occur once a gesture grab is installed; nothing to do.
++            }
+             GestureEvent::Cancel => {
+                 match self.gesture {
+                     GestureState::Recognizing => {}
+@@ -162,7 +167,8 @@ impl TouchGrab<State> for TouchSwipeGrab {
+     ) {
+         handle.down(data, None, event, seq);
+ 
+-        let ev = self.tracker.touch_down(event.slot, event.location);
++        let timestamp = Duration::from_millis(u64::from(event.time));
++        let ev = self.tracker.touch_down(event.slot, event.location, timestamp);
+         if self.handle_gesture_event(ev, data) {
+             handle.unset_grab(self, data);
+         }
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index b0a87637..abcf70cd 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -1,7 +1,9 @@
+ //! Touch swipe gesture tracker.
+ //!
+ //! Tracks active touch slots and recognizes when 3+ fingers are swiping together in the same
+-//! direction, producing synthetic gesture begin / update / end signals.
++//! direction, producing synthetic gesture begin / update / end signals. Also recognizes taps:
++//! all fingers going down and up within a short window without enough movement to become a
++//! swipe.
+ 
+ use std::collections::HashMap;
+ use std::time::Duration;
+@@ -13,6 +15,10 @@ use smithay::utils::{Logical, Point};
+ /// this before a gesture is recognized. Copied from GNOME Shell / libadwaita (same as touchpad).
+ const GESTURE_THRESHOLD_PX: f64 = 16.0;
+ 
++/// Maximum time from the first finger down to the last finger up for the touch sequence to
++/// count as a tap rather than a cancelled gesture.
++const TAP_MAX_DURATION: Duration = Duration::from_millis(250);
++
+ /// Default minimum number of simultaneous touch points required to start a gesture.
+ #[cfg(test)]
+ const DEFAULT_MIN_FINGERS: usize = 3;
+@@ -42,6 +48,12 @@ pub enum GestureEvent {
+     End {
+         timestamp: Duration,
+     },
++    /// All fingers lifted quickly without enough movement to become a swipe.
++    Tap {
++        /// Maximum number of simultaneous fingers reached during the tap.
++        fingers: usize,
++        timestamp: Duration,
++    },
+     Cancel,
+ }
+ 
+@@ -70,6 +82,10 @@ pub struct TouchSwipeGestureTracker {
+     direction: SwipeDirection,
+     /// Minimum number of simultaneous touch points required to start a gesture.
+     min_fingers: usize,
++    /// When the current touch sequence started (first finger down); used for tap detection.
++    first_down: Option<Duration>,
++    /// Maximum simultaneous fingers seen during the current touch sequence.
++    max_slots: usize,
+ }
+ 
+ impl TouchSwipeGestureTracker {
+@@ -82,6 +98,8 @@ impl TouchSwipeGestureTracker {
+             phase: Phase::Idle,
+             direction: SwipeDirection::Horizontal,
+             min_fingers,
++            first_down: None,
++            max_slots: 0,
+         }
+     }
+ 
+@@ -101,6 +119,7 @@ impl TouchSwipeGestureTracker {
+         &mut self,
+         slot: TouchSlot,
+         pos: Point<f64, Logical>,
++        timestamp: Duration,
+     ) -> Option<GestureEvent> {
+         // If a gesture is already active, ignore additional fingers.
+         if self.phase == Phase::Active {
+@@ -114,7 +133,12 @@ impl TouchSwipeGestureTracker {
+             return None;
+         }
+ 
++        if self.slots.is_empty() {
++            self.first_down = Some(timestamp);
++        }
++
+         self.slots.insert(slot, pos);
++        self.max_slots = self.max_slots.max(self.slots.len());
+ 
+         // Transition from Idle to Recognizing once we have enough fingers.
+         if self.phase == Phase::Idle && self.slots.len() >= self.min_fingers {
+@@ -182,16 +206,24 @@ impl TouchSwipeGestureTracker {
+                 }
+             }
+             Phase::Recognizing => {
+-                // Lost a finger before recognition — check if we still have enough.
++                // A finger lifted before recognition. This may be a tap ending
++                // (fingers lifting one after another) or a fizzle; wait until
++                // all fingers are up before deciding.
+                 self.tracked_slots.retain(|s| *s != slot);
+                 self.start_positions.remove(&slot);
+-                if self.slots.len() < self.min_fingers {
+-                    trace!(
+-                        "touch_swipe: dropped below {} fingers during recognition, cancelling",
+-                        self.min_fingers
+-                    );
++                if self.slots.is_empty() {
++                    let is_tap = self
++                        .first_down
++                        .and_then(|t0| timestamp.checked_sub(t0))
++                        .is_some_and(|elapsed| elapsed <= TAP_MAX_DURATION);
++                    let fingers = self.max_slots;
+                     self.reset_internal();
+-                    Some(GestureEvent::Cancel)
++                    if is_tap {
++                        debug!("touch_swipe: tap detected ({fingers} fingers)");
++                        Some(GestureEvent::Tap { fingers, timestamp })
++                    } else {
++                        Some(GestureEvent::Cancel)
++                    }
+                 } else {
+                     None
+                 }
+@@ -212,6 +244,8 @@ impl TouchSwipeGestureTracker {
+         self.prev_centroid = Point::from((0.0, 0.0));
+         self.phase = Phase::Idle;
+         self.direction = SwipeDirection::Horizontal;
++        self.first_down = None;
++        self.max_slots = 0;
+         // min_fingers is intentionally preserved across resets.
+     }
+ 
+@@ -303,8 +337,8 @@ mod tests {
+     #[test]
+     fn no_gesture_with_fewer_than_three_fingers() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        assert!(tracker.touch_down(slot(0), pt(100.0, 100.0)).is_none());
+-        assert!(tracker.touch_down(slot(1), pt(110.0, 100.0)).is_none());
++        assert!(tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0)).is_none());
++        assert!(tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0)).is_none());
+         // Move them a lot — still no gesture.
+         assert!(tracker
+             .touch_motion(slot(0), pt(200.0, 100.0), ts(10))
+@@ -318,9 +352,9 @@ mod tests {
+     #[test]
+     fn gesture_begins_after_threshold_with_three_fingers() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         assert!(!tracker.is_active());
+ 
+@@ -348,9 +382,9 @@ mod tests {
+     #[test]
+     fn vertical_direction_detected() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         // Move all fingers down past threshold (20px each).
+         tracker.touch_motion(slot(0), pt(100.0, 120.0), ts(10));
+@@ -369,9 +403,9 @@ mod tests {
+     #[test]
+     fn updates_emit_centroid_delta() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         // Trigger recognition by moving right.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+@@ -396,9 +430,9 @@ mod tests {
+     #[test]
+     fn gesture_ends_on_tracked_slot_lift() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         // Trigger recognition.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+@@ -415,9 +449,9 @@ mod tests {
+     #[test]
+     fn extra_finger_ignored_during_active_gesture() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         // Trigger recognition.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+@@ -426,7 +460,7 @@ mod tests {
+         assert!(tracker.is_active());
+ 
+         // Add a 4th finger.
+-        let ev = tracker.touch_down(slot(3), pt(200.0, 200.0));
++        let ev = tracker.touch_down(slot(3), pt(200.0, 200.0), ts(15));
+         assert!(ev.is_none());
+ 
+         // Lifting the 4th finger doesn't end the gesture.
+@@ -436,24 +470,70 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn cancel_when_finger_lifts_during_recognition() {
++    fn tap_detected_when_fingers_lift_quickly() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(20));
++
++        // Lift them one after another, well within the tap window. The first
++        // lift drops below the finger minimum but must not decide yet.
++        assert!(tracker.touch_up(slot(2), ts(60)).is_none());
++        assert!(tracker.touch_up(slot(0), ts(70)).is_none());
++        let ev = tracker.touch_up(slot(1), ts(80));
++        assert!(matches!(ev, Some(GestureEvent::Tap { .. })));
++        assert!(!tracker.is_active());
++    }
+ 
+-        // Lift a finger before threshold is reached.
+-        let ev = tracker.touch_up(slot(2), ts(10));
++    #[test]
++    fn slow_touch_sequence_cancels_instead_of_tap() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++
++        // Fingers stay down long past the tap window.
++        assert!(tracker.touch_up(slot(2), ts(300)).is_none());
++        assert!(tracker.touch_up(slot(0), ts(310)).is_none());
++        let ev = tracker.touch_up(slot(1), ts(320));
+         assert!(matches!(ev, Some(GestureEvent::Cancel)));
+-        assert!(!tracker.is_active());
++    }
++
++    #[test]
++    fn tap_below_finger_count_ignored() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
++
++        // Two fingers never reach the recognizing phase, so no tap.
++        assert!(tracker.touch_up(slot(1), ts(50)).is_none());
++        assert!(tracker.touch_up(slot(0), ts(60)).is_none());
++    }
++
++    #[test]
++    fn tap_reports_max_finger_count() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(20));
++        // A fourth finger joins before the lift.
++        tracker.touch_down(slot(3), pt(130.0, 100.0), ts(30));
++
++        assert!(tracker.touch_up(slot(3), ts(60)).is_none());
++        assert!(tracker.touch_up(slot(2), ts(70)).is_none());
++        assert!(tracker.touch_up(slot(0), ts(80)).is_none());
++        match tracker.touch_up(slot(1), ts(90)) {
++            Some(GestureEvent::Tap { fingers, .. }) => assert_eq!(fingers, 4),
++            other => panic!("expected Tap, got {other:?}"),
++        }
+     }
+ 
+     #[test]
+     fn reset_clears_state() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+ 
+         // Trigger recognition.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+@@ -475,11 +555,11 @@ mod tests {
+     #[test]
+     fn four_fingers_down_before_recognition() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(110.0, 100.0));
+-        tracker.touch_down(slot(2), pt(120.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+         // 4th finger during recognizing phase is fine — it gets added to tracked_slots.
+-        tracker.touch_down(slot(3), pt(130.0, 100.0));
++        tracker.touch_down(slot(3), pt(130.0, 100.0), ts(5));
+ 
+         // Move all right past threshold.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+@@ -494,9 +574,9 @@ mod tests {
+     #[test]
+     fn begin_delta_reflects_cumulative_movement() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-        tracker.touch_down(slot(0), pt(100.0, 100.0));
+-        tracker.touch_down(slot(1), pt(200.0, 100.0));
+-        tracker.touch_down(slot(2), pt(300.0, 100.0));
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(200.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(300.0, 100.0), ts(0));
+ 
+         // Move all three fingers 20px to the right.
+         tracker.touch_motion(slot(0), pt(120.0, 100.0), ts(10));
+diff --git a/src/layout/mod.rs b/src/layout/mod.rs
+index 5c4dd639..00411cfb 100644
+--- a/src/layout/mod.rs
++++ b/src/layout/mod.rs
+@@ -651,7 +651,7 @@ impl Options {
+         Self {
+             layout: config.layout.clone(),
+             animations: config.animations.clone(),
+-            gestures: config.gestures,
++            gestures: config.gestures.clone(),
+             overview: config.overview,
+             blur: config.blur,
+             disable_resize_throttling: config.debug.disable_resize_throttling,
+diff --git a/src/niri.rs b/src/niri.rs
+index 3a9f9c53..026e62c0 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -371,6 +371,7 @@ pub struct Niri {
+     pub tablet_cursor_location: Option<Point<f64, Logical>>,
+     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
+     pub touch_swipe_tracker: crate::input::touch_swipe_tracker::TouchSwipeGestureTracker,
++    pub touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker,
+     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
+     pub vertical_wheel_tracker: ScrollTracker,
+     pub horizontal_wheel_tracker: ScrollTracker,
+@@ -2585,6 +2586,7 @@ impl Niri {
+             touch_swipe_tracker: crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(
+                 3,
+             ),
++            touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker::default(),
+             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
+             vertical_wheel_tracker: ScrollTracker::new(120),
+             horizontal_wheel_tracker: ScrollTracker::new(120),
+-- 
+2.55.0
+
