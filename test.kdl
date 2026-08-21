@@ -1,0 +1,20 @@
+// Minimal config for nested testing of the gesture patchset.
+// Deliberately excludes all includes/autostart so the nested instance
+// doesn't re-spawn the whole session stack.
+spawn-at-startup "foot"
+
+binds {
+    Mod+T { spawn "foot"; }
+    Mod+Shift+E { quit; }
+}
+
+gestures {
+    touchscreen-swipe {
+        fingers 3
+        tap { maximize-column; }   // also the default
+        tap-4 { spawn "foot"; }    // 4+-finger tap (stand-in for the launcher)
+    }
+    touchscreen-edge-swipe {
+        spawn "foot"   // stand-in for the launcher when testing nested
+    }
+}

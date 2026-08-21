@@ -1,0 +1,34 @@
+# Local package: wvkbd from the maintained upstream (proycon's fork), which
+# includes the Super modifier key on deskintl. The AUR wvkbd-git builds the
+# stale jjsullivan5196 repo, which lacks it.
+# Also builds the mobintl variant (mobile layers) alongside deskintl.
+pkgname=wvkbd-touch
+pkgver=r277.6b41504
+pkgrel=1
+pkgdesc='On-screen keyboard for wlroots (maintained upstream, with Super key)'
+url='https://git.sr.ht/~proycon/wvkbd'
+arch=('x86_64' 'aarch64')
+license=('GPL3')
+depends=('wayland' 'pango' 'cairo' 'glibc')
+makedepends=('git' 'fontconfig' 'libxkbcommon' 'scdoc')
+provides=('wvkbd' 'wvkbd-git')
+conflicts=('wvkbd' 'wvkbd-git')
+source=("git+https://git.sr.ht/~proycon/wvkbd")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd wvkbd
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd wvkbd
+  make LAYOUT=deskintl
+  make LAYOUT=mobintl
+}
+
+package() {
+  cd wvkbd
+  make LAYOUT=deskintl PREFIX=/usr DESTDIR="$pkgdir" install
+  make LAYOUT=mobintl PREFIX=/usr DESTDIR="$pkgdir" install
+}
