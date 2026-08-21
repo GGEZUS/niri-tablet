@@ -5,7 +5,10 @@ touchscreen gestures, an on-screen keyboard that adapts to screen orientation,
 and automatic display rotation — everything needed to run a niri session with
 the keyboard detached.
 
-Built and daily-driven on a Microsoft Surface Go 2 running Arch Linux.
+Built and daily-driven on a Microsoft Surface Go 2 running Arch Linux, and
+verified from a fresh install on a ThinkPad T480.
+
+[![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 
 ## Gestures
 
@@ -72,8 +75,25 @@ reports that rather than the pkgver's `26.04.6…`. The positive check that
 the patched binary is running: `niri validate` accepts a `gestures {}`
 block — stock niri rejects the unknown node.
 
-On other distros: apply the patches in `pkg/` onto the matching niri release
-(`_tag` in the PKGBUILD names it) and build with `cargo build --release`.
+## Other distros
+
+The patchset is plain `git`/`patch` + cargo — nothing Arch-specific in it:
+
+```bash
+git clone https://github.com/niri-wm/niri
+cd niri
+git checkout v26.04        # the release named by _tag in pkg/PKGBUILD
+for p in /path/to/niri-tablet/pkg/*.patch; do patch -Np1 < "$p"; done
+cargo build --release      # binary lands in target/release/niri
+```
+
+You need `rust`, `cargo` and `clang` plus the system libraries niri links
+against — the PKGBUILD's `depends` list doubles as the checklist (pipewire,
+libinput, libudev, libdisplay-info, libxkbcommon, seatd, …). `cargo test
+touch_` runs the unit tests. The helpers in `scripts/` and the config
+fragment in `config/` are distro-agnostic (POSIX sh + python3); off-Arch,
+build [wvkbd](https://git.sr.ht/~proycon/wvkbd) from source instead of using
+the AUR package.
 
 ## Updating
 
@@ -136,7 +156,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 ## Status & credits
 
 - Patchset: `v26.04 + 6 patches`, unit-tested (`cargo test touch_`) and
-  hardware-validated on a Surface Go 2.
+  hardware-validated on a Surface Go 2 and a ThinkPad T480.
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.
