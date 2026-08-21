@@ -11,16 +11,16 @@ BASE=$(git -C niri describe --tags --abbrev=0)
 PKGVER=$(git -C niri describe --tags --long | sed 's/^v//;s/-/./g')
 echo "regen: base $BASE, pkgver $PKGVER"
 
-rm -f patches/*.patch
-git -C niri format-patch "$BASE..gestures" -o "$(pwd)/patches/" >/dev/null
+rm -f pkg/*.patch
+git -C niri format-patch "$BASE..gestures" -o "$(pwd)/pkg/" >/dev/null
 
 shopt -s nullglob
 NL=$'\n'
 SRC="source=(${NL}    \"git+https://github.com/niri-wm/niri#tag=\${_tag}\""
 SUMS="sha256sums=(${NL}    'SKIP'"
-for p in patches/*.patch; do
+for p in pkg/*.patch; do
     h=$(sha256sum "$p" | awk '{print $1}')
-    SRC+="${NL}    '../$p'"
+    SRC+="${NL}    '$(basename "$p")'"
     SUMS+="${NL}    '$h'"
 done
 SRC+="${NL})"

@@ -28,14 +28,14 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`patches/`** — 6 patches (`git am`-able, authorship preserved): animated
-  3-finger swipes reusing niri's touchpad gesture pipeline, 3/4-finger taps,
-  discrete 4-finger flicks, and the optional edge swipe. The animated swipes
-  run through the same spring-physics pipeline as touchpad gestures —
-  rotation-proof logical coordinates, live follow, inertia.
+- **`pkg/`** — the Arch PKGBUILD plus the 6 patches (`git am`-able, authorship
+  preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
+  reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
+  flicks, and the optional edge swipe. The animated swipes run through the
+  same spring-physics pipeline as touchpad gestures — rotation-proof logical
+  coordinates, live follow, inertia.
 - **`config/gestures.kdl`** — the gesture config block (see above).
 - **`scripts/`** — OSK toggle + auto-rotate helpers (work on stock niri too).
-- **`pkg/PKGBUILD`** — Arch package: upstream niri release + the patches.
 
 The base swipe implementation comes from
 [niri-touch-gestures](https://github.com/pir0c0pter0/niri-touch-gestures) by
@@ -64,7 +64,7 @@ Needs `rust`, `cargo`, `clang` and `git` to build. First build takes a while;
 the PKGBUILD shares a cargo target dir (`~/.cache/niri-tablet-target`) so
 rebuilds are incremental.
 
-On other distros: apply `patches/` onto the matching niri release
+On other distros: apply the patches in `pkg/` onto the matching niri release
 (`_tag` in the PKGBUILD names it) and build with `cargo build --release`.
 
 ## On-screen keyboard + auto-rotation (optional, works on stock niri too)
@@ -87,8 +87,7 @@ systemctl --user enable --now niri-rotate.service
 ## Repo layout
 
 ```
-patches/   the patch series against upstream niri
-pkg/       Arch PKGBUILD (upstream release + patches)
+pkg/       Arch PKGBUILD + the patch series against upstream niri
 scripts/   OSK toggle + auto-rotate helpers
 config/    example niri config fragments
 extras/    optional extras (wvkbd build with mobile layouts)

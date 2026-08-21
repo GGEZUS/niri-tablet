@@ -1,6 +1,7 @@
 # niri-tablet — niri with the touchscreen gesture patchset.
 #
-# Builds from the upstream niri release + the patch series in ../patches/.
+# Builds from the upstream niri release + the patch series sitting next to
+# this file (makepkg requires local sources flat in the PKGBUILD dir).
 # Maintainer flow (repo root): ./update.sh (rebase, regen patches, rebuild)
 # or ./install.sh (regen patches from the current branch, rebuild).
 #
@@ -22,12 +23,12 @@ conflicts=('niri')
 _tag=v26.04  # upstream release the patchset is rebased onto
 source=(
     "git+https://github.com/niri-wm/niri#tag=${_tag}"
-    '../patches/0001-feat-input-add-touchscreen-3-finger-swipe-gestures.patch'
-    '../patches/0002-feat-config-add-touchscreen-swipe-gesture-configurat.patch'
-    '../patches/0003-docs-document-touchscreen-swipe-gestures.patch'
-    '../patches/0004-feat-input-touchscreen-tap-and-bottom-edge-swipe-ges.patch'
-    '../patches/0005-feat-input-discrete-4-finger-vertical-swipe-gestures.patch'
-    '../patches/0006-fix-input-count-late-joining-fingers-and-fix-deadloc.patch'
+    '0001-feat-input-add-touchscreen-3-finger-swipe-gestures.patch'
+    '0002-feat-config-add-touchscreen-swipe-gesture-configurat.patch'
+    '0003-docs-document-touchscreen-swipe-gestures.patch'
+    '0004-feat-input-touchscreen-tap-and-bottom-edge-swipe-ges.patch'
+    '0005-feat-input-discrete-4-finger-vertical-swipe-gestures.patch'
+    '0006-fix-input-count-late-joining-fingers-and-fix-deadloc.patch'
 )
 sha256sums=(
     'SKIP'
