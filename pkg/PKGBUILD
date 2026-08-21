@@ -57,6 +57,9 @@ build() {
     # Shared, overridable target dir keeps local rebuilds incremental.
     unset CFLAGS CXXFLAGS LDFLAGS RUSTFLAGS
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/niri-tablet-target}"
+    # --frozen implies --offline, which rejects the initial fetch of the
+    # lockfile-pinned git deps (smithay) on a machine with a cold ~/.cargo.
+    cargo fetch --locked
     cargo build --frozen --release
 }
 
