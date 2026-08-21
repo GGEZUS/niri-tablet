@@ -69,20 +69,31 @@ On other distros: apply the patches in `pkg/` onto the matching niri release
 
 ## On-screen keyboard + auto-rotation (optional, works on stock niri too)
 
+Two independent helpers — take either, both, or neither:
+
 ```bash
-cp scripts/niri-osk.sh scripts/niri-rotate.sh ~/.local/bin/
+# OSK — any touchscreen device, no sensors involved
+cp scripts/niri-osk.sh ~/.local/bin/
+
+# auto-rotate — only for devices with an accelerometer
+cp scripts/niri-rotate.sh ~/.local/bin/
 cp scripts/niri-rotate.service ~/.config/systemd/user/
 systemctl --user enable --now niri-rotate.service
 ```
 
-- **`niri-osk.sh`** — toggles [wvkbd](https://git.sr.ht/~proycon/wvkbd)
-  (`wvkbd-deskintl`); doubles its height in portrait orientation and flips the
-  xkb layout group if you use a two-group layout like `"pt,us"` (the OSK is
-  US-labelled).
+- **`niri-osk.sh`** — toggles [wvkbd](https://git.sr.ht/~proycon/wvkbd); install
+  the AUR package **`wvkbd-git`**, which provides the `wvkbd-deskintl` binary.
+  Reads the output's current transform from niri itself (not from sensors):
+  doubles the keyboard height in portrait and flips the xkb layout group if
+  you use a two-group layout like `"pt,us"` (the OSK is US-labelled).
 - **`niri-rotate.sh`** — follows the accelerometer via
   [iio-sensor-proxy](https://github.com/hadess/iio-sensor-proxy) and sets
   `niri msg output <name> transform` as the tablet turns; resizes a running
-  keyboard. Edit `OUTPUT`/heights at the top of the scripts for your device.
+  keyboard. Only useful with a real accelerometer — check yours with
+  `monitor-sensor` (after starting `iio-sensor-proxy.service`); many touch
+  laptops have none, in which case skip it: nothing else depends on it.
+
+Edit `OUTPUT`/heights at the top of the scripts for your device.
 
 ## Repo layout
 
