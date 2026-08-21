@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patchset:
+    name: patches apply + tests pass against _tag (clean machine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: archlinux:base-devel
+    env:
+      CARGO_HOME: /root/.cargo
+    steps:
+      - name: Install toolchain (the PKGBUILD's makedepends)
+        run: pacman -Syu --noconfirm rust git clang
+
+      - name: Checkout niri-tablet
+        uses: actions/checkout@v4
+
+      - name: Parse _tag from the PKGBUILD
+        id: tag
+        run: echo "tag=$(sed -n 's/^_tag=\([^[:space:]#]*\).*/\1/p' pkg/PKGBUILD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo deps and build dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            /root/.cargo/git
+            /root/.cargo/registry
+            niri/target
+          key: niri-${{ steps.tag.outputs.tag }}-${{ hashFiles('pkg/*.patch') }}
+          restore-keys: niri-${{ steps.tag.outputs.tag }}-
+
+      - name: Clone niri at ${{ steps.tag.outputs.tag }}
+        run: git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" https://github.com/niri-wm/niri
+
+      - name: Apply the patch series (same as makepkg's prepare())
+        run: |
+          cd niri
+          for p in ../pkg/*.patch; do
+            echo "==> applying $(basename "$p")"
+            patch -Np1 < "$p"
+          done
+
+      - name: cargo test touch_
+        run: |
+          cd niri
+          cargo test touch_
