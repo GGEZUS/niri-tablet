@@ -17,12 +17,14 @@ verified from a fresh install on a ThinkPad T480.
 | 3-finger drag, horizontal | scroll the view across columns (animated) |
 | 3-finger drag, vertical | workspace carousel (animated) |
 | 3-finger tap | maximize / restore the focused column |
-| 4-finger tap | app launcher (`noctalia msg panel-toggle launcher` by default) |
+| 4-finger tap | window overview (built-in; any launcher binds in its place) |
 | 4-finger flick down | close the focused window |
-| 4-finger flick up | toggle the on-screen keyboard |
+| 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) |
 
 All actions are configurable — every node in the `gestures` block takes any
-niri action, same as keybinds. A single-finger bottom-edge swipe is also
+niri action, same as keybinds. The example `config/gestures.kdl` binds 4-tap
+to the built-in `toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are
+one uncomment away. A single-finger bottom-edge swipe is also
 implemented but unbound by default. Touchpad behavior is untouched.
 
 ## How it works

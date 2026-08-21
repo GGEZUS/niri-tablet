@@ -3,7 +3,8 @@
 // Include from your main config (config.kdl):
 //     include "~/.config/niri/cfg/gestures.kdl"
 // or paste the block straight in. Every node takes any niri action, same as
-// keybinds — the ones below are just the tested defaults.
+// keybinds — the ones below are a sensible starting point (the compiled
+// defaults are tamer: 3-tap maximize, the rest unbound).
 gestures {
     touchscreen-swipe {
         // Minimum fingers for the animated swipes (drag = view scroll
@@ -13,9 +14,14 @@ gestures {
         // 3-finger tap: maximize / restore the focused column (also the default).
         tap { maximize-column; }
 
-        // 4-finger tap: app launcher. Noctalia shown here — use whatever
-        // launcher you run (any action/spawn works).
-        tap-4 { spawn-sh "noctalia msg panel-toggle launcher"; }
+        // 4-finger tap: window overview — niri-native, works everywhere.
+        // Prefer an app launcher? Swap in one of these (any spawn works):
+        //   Noctalia: spawn-sh "noctalia msg panel-toggle launcher"
+        //   fuzzel:   spawn "fuzzel"
+        //   wofi:     spawn "wofi" "--show" "drun"
+        //   rofi:     spawn "rofi" "-show" "drun"
+        // Or remove the node — unbound is the compiled default.
+        tap-4 { toggle-overview; }
 
         // 4-finger flick down: close the focused window (discrete, fires on lift).
         swipe-4-down { close-window; }
