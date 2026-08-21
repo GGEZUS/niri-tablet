@@ -23,5 +23,5 @@ monitor-sensor 2>/dev/null | while read -r line; do
     esac
 
     # Resize the on-screen keyboard for the new orientation (if it's up).
-    /home/rbc/.local/bin/niri-osk.sh resize
+    "$HOME/.local/bin/niri-osk.sh" resize
 done
