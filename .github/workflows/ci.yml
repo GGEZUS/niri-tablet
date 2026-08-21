@@ -19,6 +19,9 @@ jobs:
       image: archlinux:base-devel
     env:
       CARGO_HOME: /root/.cargo
+      # Outside the source tree: a restored target cache must not pre-create
+      # niri/, or the clone step fails with "destination path already exists".
+      CARGO_TARGET_DIR: /root/target
     steps:
       - name: Install toolchain (makedepends + the system libs the build links)
         run: |
@@ -39,9 +42,9 @@ jobs:
           path: |
             /root/.cargo/git
             /root/.cargo/registry
-            niri/target
-          key: niri-${{ steps.tag.outputs.tag }}-${{ hashFiles('pkg/*.patch') }}
-          restore-keys: niri-${{ steps.tag.outputs.tag }}-
+            /root/target
+          key: niri-target-${{ steps.tag.outputs.tag }}-${{ hashFiles('pkg/*.patch') }}
+          restore-keys: niri-target-${{ steps.tag.outputs.tag }}-
 
       - name: Clone niri at ${{ steps.tag.outputs.tag }}
         run: git clone --depth 1 --branch "${{ steps.tag.outputs.tag }}" https://github.com/niri-wm/niri
