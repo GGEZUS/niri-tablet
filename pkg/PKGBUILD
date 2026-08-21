@@ -9,11 +9,12 @@
 # rustc's default lld they break linking of the libspa static C shim.
 pkgname=niri-tablet
 pkgver=26.04.6.gc25fe50a
-pkgrel=1
+pkgrel=2
 pkgdesc='A scrollable-tiling Wayland compositor, with touchscreen gestures'
 url='https://github.com/GGEZUS/niri-tablet'
 arch=('x86_64' 'aarch64')
 license=('GPL-3.0-only')
+install=niri-tablet.install
 depends=('cairo' 'glib2' 'glibc' 'libdisplay-info' 'libgcc' 'libinput' 'libpipewire'
          'libxkbcommon' 'mesa' 'pango' 'pixman' 'seatd' 'systemd-libs'
          'xdg-desktop-portal-impl')

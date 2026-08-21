@@ -1,0 +1,24 @@
+# niri-tablet install scriptlet — the one thing users must not miss:
+# without IgnorePkg, the next -Syu swaps back to stock niri, silently.
+
+post_install() {
+    cat <<'EOF'
+
+==> niri-tablet replaces stock niri.
+==> Until this line is in /etc/pacman.conf, the next `pacman -Syu`
+==> will swap back to stock niri and the gestures will vanish:
+==>     IgnorePkg = niri
+==> Then log out/in (or reboot) to start the patched compositor.
+
+EOF
+}
+
+post_upgrade() {
+    cat <<'EOF'
+
+==> niri-tablet updated. Log out/in (or reboot) to start the new build.
+==> Still needs `IgnorePkg = niri` in /etc/pacman.conf, or the next
+==> `pacman -Syu` swaps back to stock niri.
+
+EOF
+}
