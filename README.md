@@ -82,10 +82,12 @@ systemctl --user enable --now niri-rotate.service
 ```
 
 - **`niri-osk.sh`** — toggles [wvkbd](https://git.sr.ht/~proycon/wvkbd); install
-  the AUR package **`wvkbd-git`**, which provides the `wvkbd-deskintl` binary.
-  Reads the output's current transform from niri itself (not from sensors):
-  doubles the keyboard height in portrait and flips the xkb layout group if
-  you use a two-group layout like `"pt,us"` (the OSK is US-labelled).
+  the AUR package **`wvkbd-git`**, which provides the `wvkbd-deskintl` binary
+  (`python3` parses the output transform). Reads the transform from niri
+  itself (not from sensors): doubles the keyboard height in portrait and
+  flips the xkb layout group if you use a two-group layout like `"pt,us"`
+  (the OSK is US-labelled; with a single-group layout the flip is a no-op,
+  so a US-only machine needs nothing special).
 - **`niri-rotate.sh`** — follows the accelerometer via
   [iio-sensor-proxy](https://github.com/hadess/iio-sensor-proxy) and sets
   `niri msg output <name> transform` as the tablet turns; resizes a running
