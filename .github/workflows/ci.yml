@@ -20,8 +20,11 @@ jobs:
     env:
       CARGO_HOME: /root/.cargo
     steps:
-      - name: Install toolchain (the PKGBUILD's makedepends)
-        run: pacman -Syu --noconfirm rust git clang
+      - name: Install toolchain (makedepends + the system libs the build links)
+        run: |
+          pacman -Syu --noconfirm rust git clang \
+            pipewire libinput systemd-libs libdisplay-info libxkbcommon \
+            mesa cairo pango glib2 pixman seatd
 
       - name: Checkout niri-tablet
         uses: actions/checkout@v4
