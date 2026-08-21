@@ -59,7 +59,9 @@ Then protect it from repo updates in `/etc/pacman.conf`:
 IgnorePkg = niri
 ```
 
-`niri-tablet` provides and conflicts with `niri`, so the swap is automatic.
+pacman will ask to remove stock niri (`Remove niri? [y/N]` — the default is
+N) — answer **y**; with N the install simply aborts. `niri-tablet` provides
+and conflicts with `niri`, so the swap itself is automatic.
 Needs `rust`, `cargo`, `clang` and `git` to build. First build takes a while;
 the PKGBUILD shares a cargo target dir (`~/.cache/niri-tablet-target`) so
 rebuilds are incremental.
@@ -72,6 +74,23 @@ block — stock niri rejects the unknown node.
 
 On other distros: apply the patches in `pkg/` onto the matching niri release
 (`_tag` in the PKGBUILD names it) and build with `cargo build --release`.
+
+## Updating
+
+The patchset is rebased onto the niri release named by `_tag` in the PKGBUILD;
+when this repo follows a new one:
+
+```bash
+git pull
+cd pkg
+makepkg -si        # incremental: the shared target dir is reused
+```
+
+`update.sh` and `install.sh` at the repo root are maintainer scripts (they
+rebase and regenerate the patch series against a dev clone of niri); plain
+`makepkg` is all a user install ever needs. After a big Rust toolchain jump,
+deleting `~/.cache/niri-tablet-target` is harmless — the next build is just a
+slow cold one again.
 
 ## On-screen keyboard + auto-rotation (optional, works on stock niri too)
 
