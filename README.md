@@ -64,6 +64,12 @@ Needs `rust`, `cargo`, `clang` and `git` to build. First build takes a while;
 the PKGBUILD shares a cargo target dir (`~/.cache/niri-tablet-target`) so
 rebuilds are incremental.
 
+After a re-login, `niri --version` prints `26.04 (v26.04-modified)`: the
+patchset applies uncommitted on top of the release tag, so git-describe
+reports that rather than the pkgver's `26.04.6…`. The positive check that
+the patched binary is running: `niri validate` accepts a `gestures {}`
+block — stock niri rejects the unknown node.
+
 On other distros: apply the patches in `pkg/` onto the matching niri release
 (`_tag` in the PKGBUILD names it) and build with `cargo build --release`.
 
