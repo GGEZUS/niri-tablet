@@ -57,7 +57,7 @@ jobs:
             patch -Np1 < "$p"
           done
 
-      - name: cargo test touch_
+      - name: cargo test (full suite — filtered runs let snapshot/test rot hide)
         run: |
           cd niri
-          cargo test touch_
+          cargo test
