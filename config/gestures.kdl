@@ -6,6 +6,13 @@
 // keybinds — the ones below are a sensible starting point (the compiled
 // defaults are tamer: 3-tap maximize, the rest unbound).
 gestures {
+    // Touch point visualization (demo videos, gesture debugging): translucent
+    // dots follow the fingers, rendered by the compositor — any screen
+    // recorder captures them, input is never touched. Off unless configured.
+    //   "gestures"  dots only while 3+/4-finger gesture touches are down
+    //   "all"       every finger (debugging)
+    show-touch-points "gestures";
+
     touchscreen-swipe {
         // Minimum fingers for the animated swipes (drag = view scroll
         // horizontally, workspace carousel vertically).

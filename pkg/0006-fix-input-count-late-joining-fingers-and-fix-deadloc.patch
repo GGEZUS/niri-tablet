@@ -1,7 +1,7 @@
-From c25fe50ad9bff78a20cf6877a192b714e406ad9d Mon Sep 17 00:00:00 2001
+From 7a5c6b05c2e1f79dd9a6c021b164339fddea75f2 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Thu, 20 Aug 2026 22:02:36 +0100
-Subject: [PATCH 6/6] fix(input): count late-joining fingers and fix deadlock
+Subject: [PATCH 6/8] fix(input): count late-joining fingers and fix deadlock
  in discrete swipes
 
 - Fingers landing between the recognition threshold arming (3rd finger

@@ -10,7 +10,7 @@ verified from a fresh install on a ThinkPad T480.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%206%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%208%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 
 ## Gestures
@@ -30,18 +30,35 @@ to the built-in `toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are
 one uncomment away. A single-finger bottom-edge swipe is also
 implemented but unbound by default. Touchpad behavior is untouched.
 
+### Touch point visualization
+
+`show-touch-points` renders translucent dots that follow your fingers —
+drawn by the compositor itself, so any screen recording captures them and
+input is never touched. Meant for demo videos and for debugging gestures:
+
+```kdl
+gestures {
+    show-touch-points "gestures"   // dots only for 3+/4-finger gesture touches
+    // show-touch-points "all"     // every finger (debugging)
+}
+```
+
+Off by default. In `gestures` mode dots appear only while enough fingers
+are down concurrently for a gesture (`touchscreen-swipe.fingers`), so
+ordinary taps and scrolling stay clean.
+
 ## How it works
 
 niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 6 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 8 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
-  flicks, and the optional edge swipe. The animated swipes run through the
-  same spring-physics pipeline as touchpad gestures — rotation-proof logical
-  coordinates, live follow, inertia.
+  flicks, the optional edge swipe, and touch point visualization. The
+  animated swipes run through the same spring-physics pipeline as touchpad
+  gestures — rotation-proof logical coordinates, live follow, inertia.
 - **`config/gestures.kdl`** — the gesture config block (see above).
 - **`scripts/`** — OSK toggle + auto-rotate helpers (work on stock niri too).
 
@@ -160,7 +177,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 6 patches`, unit-tested (`cargo test touch_`) and
+- Patchset: `v26.04 + 8 patches`, unit-tested (full suite runs in CI) and
   hardware-validated on a Surface Go 2 and a ThinkPad T480.
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex

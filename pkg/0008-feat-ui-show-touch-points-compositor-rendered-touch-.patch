@@ -1,0 +1,764 @@
+From ed74b55aed6ffeff96a9ace23c22330adc722960 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Sat, 22 Aug 2026 14:30:21 +0100
+Subject: [PATCH 8/8] =?UTF-8?q?feat(ui):=20show-touch-points=20=E2=80=94?=
+ =?UTF-8?q?=20compositor-rendered=20touch=20point=20visualization?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Translucent dots follow the fingers: compositor-side, purely observational
+(never consumes events, no interference with gesture recognition), captured
+by any screen recorder. For demo videos and gesture debugging.
+
+    gestures {
+        show-touch-points all       // every finger gets a dot
+        show-touch-points gestures  // only 3+/4-finger gesture touches
+    }
+
+Off by default. In gestures mode, dots render only while at least
+touchscreen-swipe.fingers slots are down, so ordinary taps and scrolling
+stay clean. Dots fade in on press (80 ms) and out on lift (250 ms);
+texture cached per output scale like the config error notification.
+---
+ niri-config/src/gestures.rs |  29 +++
+ niri-config/src/lib.rs      |   4 +-
+ src/input/mod.rs            |  42 +++-
+ src/niri.rs                 |  25 +-
+ src/ui/mod.rs               |   1 +
+ src/ui/touch_points.rs      | 462 ++++++++++++++++++++++++++++++++++++
+ 6 files changed, 559 insertions(+), 4 deletions(-)
+ create mode 100644 src/ui/touch_points.rs
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index d226cfcf..48a8fec6 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -10,6 +10,9 @@ pub struct Gestures {
+     pub hot_corners: HotCorners,
+     pub touchscreen_swipe: TouchscreenSwipe,
+     pub touchscreen_edge_swipe: TouchscreenEdgeSwipe,
++    /// Visualize touch points on screen (translucent dots that follow the
++    /// fingers). Meant for demo videos and debugging gestures; off by default.
++    pub show_touch_points: ShowTouchPoints,
+ }
+ 
+ #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+@@ -24,6 +27,8 @@ pub struct GesturesPart {
+     pub touchscreen_swipe: Option<TouchscreenSwipePart>,
+     #[knuffel(child)]
+     pub touchscreen_edge_swipe: Option<TouchscreenEdgeSwipe>,
++    #[knuffel(child, unwrap(argument))]
++    pub show_touch_points: Option<ShowTouchPoints>,
+ }
+ 
+ impl MergeWith<GesturesPart> for Gestures {
+@@ -36,9 +41,33 @@ impl MergeWith<GesturesPart> for Gestures {
+         );
+         merge_clone!((self, part), hot_corners);
+         merge_clone!((self, part), touchscreen_edge_swipe);
++        if let Some(show_touch_points) = part.show_touch_points {
++            self.show_touch_points = show_touch_points;
++        }
+     }
+ }
+ 
++/// Touch point visualization mode.
++///
++/// ```kdl
++/// gestures {
++///     show-touch-points "all"       // every finger gets a dot
++///     show-touch-points "gestures"  // dots only while enough fingers are
++///                                   // down for a gesture (3/4-finger
++///                                   // swipes, taps)
++/// }
++/// ```
++#[derive(knuffel::DecodeScalar, Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum ShowTouchPoints {
++    #[default]
++    Off,
++    /// Every touch point gets a dot.
++    All,
++    /// Dots appear only while at least `touchscreen-swipe.fingers` slots are
++    /// down — the touches that can drive (or already are) a gesture.
++    Gestures,
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub struct DndEdgeViewScroll {
+     pub trigger_width: f64,
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 64d9ee5e..a189a0dd 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -49,7 +49,7 @@ pub use crate::appearance::*;
+ pub use crate::binds::*;
+ pub use crate::debug::Debug;
+ pub use crate::error::{ConfigIncludeError, ConfigParseResult};
+-pub use crate::gestures::{Gestures, TouchscreenSwipe};
++pub use crate::gestures::{Gestures, ShowTouchPoints, TouchscreenSwipe};
+ pub use crate::input::{Input, ModKey, ScrollMethod, TrackLayout, WarpMouseToFocusMode, Xkb};
+ pub use crate::layer_rule::LayerRule;
+ pub use crate::layout::*;
+@@ -869,6 +869,7 @@ mod tests {
+                     trigger-width 10
+                     max-speed 50
+                 }
++                show-touch-points "gestures"
+             }
+ 
+             environment {
+@@ -1674,6 +1675,7 @@ mod tests {
+                 touchscreen_edge_swipe: TouchscreenEdgeSwipe {
+                     spawn: [],
+                 },
++                show_touch_points: Gestures,
+             },
+             overview: Overview {
+                 zoom: 0.5,
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 9df20451..4310914c 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -7,7 +7,8 @@ use std::time::Duration;
+ use calloop::timer::{TimeoutAction, Timer};
+ use input::event::gesture::GestureEventCoordinates as _;
+ use niri_config::{
+-    Action, Bind, Binds, Config, Key, ModKey, Modifiers, MruDirection, SwitchBinds, Trigger,
++    Action, Bind, Binds, Config, Key, ModKey, Modifiers, MruDirection, ShowTouchPoints,
++    SwitchBinds, Trigger,
+ };
+ use niri_ipc::LayoutSwitchTarget;
+ use smithay::backend::input::{
+@@ -4071,6 +4072,17 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        // Touch point visualization (pure observer; never consumes events).
++        if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off {
++            let min_fingers =
++                usize::from(self.niri.config.borrow().gestures.touchscreen_swipe.fingers);
++            self.niri.touch_points.down(slot, pos, min_fingers);
++            if let Some((output, _)) = self.niri.output_under(pos) {
++                let output = output.clone();
++                self.niri.queue_redraw(&output);
++            }
++        }
++
+         // Always feed touchscreen swipe gesture tracker — we need to track all
+         // fingers even when smithay has an implicit touch grab on the surface.
+         self.niri
+@@ -4226,6 +4238,15 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        // Touch point visualization: the dot remembers its position, so the
++        // (positionless) up event just starts its fade-out.
++        if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
++            && !self.niri.touch_points.is_empty()
++        {
++            self.niri.touch_points.up(slot);
++            self.niri.queue_redraw_all();
++        }
++
+         // Always feed touchscreen swipe gesture tracker; run the tap action on a
+         // quick multi-finger tap.
+         let timestamp = Duration::from_micros(evt.time());
+@@ -4294,6 +4315,19 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        // Touch point visualization (pure observer; never consumes events).
++        if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
++            && !self.niri.touch_points.is_empty()
++        {
++            let min_fingers =
++                usize::from(self.niri.config.borrow().gestures.touchscreen_swipe.fingers);
++            self.niri.touch_points.motion(slot, pos, min_fingers);
++            if let Some((output, _)) = self.niri.output_under(pos) {
++                let output = output.clone();
++                self.niri.queue_redraw(&output);
++            }
++        }
++
+         // Always feed touchscreen swipe gesture tracker — even during smithay's
+         // implicit surface touch grab, we need all finger positions to detect
+         // 3-finger swipe gestures.
+@@ -4488,6 +4522,12 @@ impl State {
+         };
+         // Reset the pre-grab tracker so stale state doesn't carry over.
+         self.niri.touch_swipe_tracker.reset();
++        if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
++            && !self.niri.touch_points.is_empty()
++        {
++            self.niri.touch_points.cancel();
++            self.niri.queue_redraw_all();
++        }
+         handle.cancel(self);
+     }
+ 
+diff --git a/src/niri.rs b/src/niri.rs
+index c26ab9f6..72c6434f 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -15,8 +15,8 @@ use anyhow::{bail, ensure, Context};
+ use calloop::futures::Scheduler;
+ use niri_config::debug::PreviewRender;
+ use niri_config::{
+-    Config, FloatOrInt, Key, Modifiers, OutputName, TrackLayout, WarpMouseToFocusMode,
+-    WorkspaceReference, Xkb,
++    Config, FloatOrInt, Key, Modifiers, OutputName, ShowTouchPoints, TrackLayout,
++    WarpMouseToFocusMode, WorkspaceReference, Xkb,
+ };
+ use smithay::backend::allocator::Fourcc;
+ use smithay::backend::input::Keycode;
+@@ -167,6 +167,7 @@ use crate::render_helpers::{
+ use crate::screencasting::Screencasting;
+ use crate::ui::config_error_notification::ConfigErrorNotification;
+ use crate::ui::exit_confirm_dialog::{ExitConfirmDialog, ExitConfirmDialogRenderElement};
++use crate::ui::touch_points::TouchPoints;
+ use crate::ui::hotkey_overlay::HotkeyOverlay;
+ use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
+ use crate::ui::screen_transition::{self, ScreenTransition};
+@@ -391,6 +392,7 @@ pub struct Niri {
+ 
+     pub screenshot_ui: ScreenshotUi,
+     pub config_error_notification: ConfigErrorNotification,
++    pub touch_points: TouchPoints,
+     pub hotkey_overlay: HotkeyOverlay,
+     pub exit_confirm_dialog: ExitConfirmDialog,
+ 
+@@ -2415,6 +2417,7 @@ impl Niri {
+         let window_mru_ui = WindowMruUi::new(config.clone());
+         let config_error_notification =
+             ConfigErrorNotification::new(animation_clock.clone(), config.clone());
++        let touch_points = TouchPoints::new(animation_clock.clone());
+ 
+         let mut hotkey_overlay = HotkeyOverlay::new(config.clone(), mod_key);
+         if !config_.hotkey_overlay.skip_at_startup {
+@@ -2607,6 +2610,7 @@ impl Niri {
+ 
+             screenshot_ui,
+             config_error_notification,
++            touch_points,
+             hotkey_overlay,
+             exit_confirm_dialog,
+ 
+@@ -4064,6 +4068,7 @@ impl Niri {
+ 
+         self.layout.advance_animations();
+         self.config_error_notification.advance_animations();
++        self.touch_points.advance_animations();
+         self.exit_confirm_dialog.advance_animations();
+         self.screenshot_ui.advance_animations();
+         self.window_mru_ui.advance_animations();
+@@ -4239,6 +4244,21 @@ impl Niri {
+             push(element.into());
+         }
+ 
++        // Next, the touch point visualization dots.
++        let touch_points_mode = self.config.borrow().gestures.show_touch_points;
++        if touch_points_mode != ShowTouchPoints::Off {
++            if let Some(geometry) = self.global_space.output_geometry(output) {
++                let geometry = geometry.to_f64();
++                self.touch_points.render(
++                    ctx.renderer,
++                    output,
++                    geometry,
++                    touch_points_mode,
++                    &mut |elem| push(elem.into()),
++                );
++            }
++        }
++
+         // If the session is locked, draw the lock surface.
+         if self.is_locked() {
+             if let Some(surface) = state.lock_surface.as_ref() {
+@@ -4608,6 +4628,7 @@ impl Niri {
+             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
+             state.unfinished_animations_remain |=
+                 self.config_error_notification.are_animations_ongoing();
++            state.unfinished_animations_remain |= self.touch_points.are_animations_ongoing();
+             state.unfinished_animations_remain |= self.exit_confirm_dialog.are_animations_ongoing();
+             state.unfinished_animations_remain |= self.screenshot_ui.are_animations_ongoing();
+             state.unfinished_animations_remain |= self.window_mru_ui.are_animations_ongoing();
+diff --git a/src/ui/mod.rs b/src/ui/mod.rs
+index c194a247..7dbec8dc 100644
+--- a/src/ui/mod.rs
++++ b/src/ui/mod.rs
+@@ -4,3 +4,4 @@ pub mod hotkey_overlay;
+ pub mod mru;
+ pub mod screen_transition;
+ pub mod screenshot_ui;
++pub mod touch_points;
+diff --git a/src/ui/touch_points.rs b/src/ui/touch_points.rs
+new file mode 100644
+index 00000000..e17c919e
+--- /dev/null
++++ b/src/ui/touch_points.rs
+@@ -0,0 +1,462 @@
++//! Touch point visualization: translucent dots that follow the fingers.
++//!
++//! Fed from the touch handlers as a pure observer — it never consumes events
++//! and does not interfere with gesture recognition. The compositor renders the
++//! dots on top of everything, so any screen recording captures them. Meant
++//! for demo videos and for debugging gestures; enabled with
++//! `gestures { show-touch-points; }`.
++
++use std::cell::RefCell;
++use std::collections::HashMap;
++
++use ordered_float::NotNan;
++use pangocairo::cairo::{self, ImageSurface};
++use smithay::backend::input::TouchSlot;
++use smithay::backend::renderer::element::Kind;
++use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
++use smithay::output::Output;
++use smithay::reexports::gbm::Format as Fourcc;
++use smithay::utils::{Logical, Point, Rectangle, Transform};
++
++use crate::animation::{Animation, Clock};
++use niri_config::ShowTouchPoints;
++use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
++use crate::render_helpers::renderer::NiriRenderer;
++use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
++use crate::utils::to_physical_precise_round;
++
++/// Logical diameter of a touch point dot.
++const DOT_DIAMETER: f64 = 28.0;
++/// How long a dot takes to fade in after the finger goes down.
++const APPEAR_MS: u32 = 80;
++/// How long a dot keeps fading after the finger lifts.
++const FADE_OUT_MS: u32 = 250;
++
++pub struct TouchPoints {
++    clock: Clock,
++    dots: HashMap<TouchSlot, Dot>,
++    // Circle texture, cached per output scale like the config error
++    // notification caches its text texture.
++    buffers: RefCell<HashMap<NotNan<f64>, Option<TextureBuffer<GlesTexture>>>>,
++}
++
++enum Dot {
++    /// Finger on the screen; the dot is fading in (or fully shown).
++    Active {
++        pos: Point<f64, Logical>,
++        appear: Animation,
++        /// Whether this dot has been on screen: enough fingers were down
++        /// concurrently at some point during its life. In gestures mode,
++        /// never-qualified dots never render — and must not pop in at lift
++        /// just to fade out.
++        qualified: bool,
++    },
++    /// Finger lifted; the dot fades out at the last known position.
++    Released {
++        pos: Point<f64, Logical>,
++        fade: Animation,
++        qualified: bool,
++    },
++}
++
++impl TouchPoints {
++    pub fn new(clock: Clock) -> Self {
++        Self {
++            clock,
++            dots: HashMap::new(),
++            buffers: RefCell::new(HashMap::new()),
++        }
++    }
++
++    fn animation(clock: &Clock, from: f64, to: f64, duration_ms: u32) -> Animation {
++        Animation::new(
++            clock.clone(),
++            from,
++            to,
++            0.,
++            niri_config::Animation {
++                off: false,
++                kind: niri_config::animations::Kind::Easing(
++                    niri_config::animations::EasingParams {
++                        duration_ms,
++                        curve: niri_config::animations::Curve::EaseOutQuad,
++                    },
++                ),
++            },
++        )
++    }
++
++    pub fn down(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, min_fingers: usize) {
++        let appear = Self::animation(&self.clock, 0., 1., APPEAR_MS);
++        self.dots.insert(
++            slot,
++            Dot::Active {
++                pos,
++                appear,
++                qualified: false,
++            },
++        );
++        self.update_qualification(min_fingers);
++    }
++
++    pub fn motion(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, min_fingers: usize) {
++        match self.dots.get_mut(&slot) {
++            Some(Dot::Active { pos: p, .. }) => *p = pos,
++            // Motion for a lifted or unknown slot: nothing to move.
++            _ => (),
++        }
++        self.update_qualification(min_fingers);
++    }
++
++    /// Marks all active dots as qualified once enough fingers are down
++    /// concurrently — including late joiners that arrived before the
++    /// threshold was reached.
++    fn update_qualification(&mut self, min_fingers: usize) {
++        if self.active_count() >= min_fingers.max(1) {
++            for dot in self.dots.values_mut() {
++                if let Dot::Active { qualified, .. } = dot {
++                    *qualified = true;
++                }
++            }
++        }
++    }
++
++    pub fn up(&mut self, slot: TouchSlot) {
++        if let Some(Dot::Active { pos, qualified, .. }) = self.dots.remove(&slot) {
++            let fade = Self::animation(&self.clock, 1., 0., FADE_OUT_MS);
++            self.dots.insert(
++                slot,
++                Dot::Released {
++                    pos,
++                    fade,
++                    qualified,
++                },
++            );
++        }
++    }
++
++    /// Backend cancelled the touches (e.g. device gone): fade everything out.
++    pub fn cancel(&mut self) {
++        let slots: Vec<_> = self.dots.keys().cloned().collect();
++        for slot in slots {
++            self.up(slot);
++        }
++    }
++
++    pub fn is_empty(&self) -> bool {
++        self.dots.is_empty()
++    }
++
++    pub fn advance_animations(&mut self) {
++        // Active dots persist while the finger is down; released dots are
++        // dropped once their fade is finished.
++        self.dots.retain(|_, dot| match dot {
++            Dot::Active { .. } => true,
++            Dot::Released { fade, .. } => !fade.is_clamped_done(),
++        });
++    }
++
++    pub fn are_animations_ongoing(&self) -> bool {
++        self.dots.values().any(|dot| match dot {
++            Dot::Active { appear, .. } => !appear.is_clamped_done(),
++            Dot::Released { fade, .. } => !fade.is_clamped_done(),
++        })
++    }
++
++    fn active_count(&self) -> usize {
++        self.dots
++            .values()
++            .filter(|dot| matches!(dot, Dot::Active { .. }))
++            .count()
++    }
++
++    /// Dots that should render under the given mode, as (position, alpha).
++    ///
++    /// In [`ShowTouchPoints::Gestures`] mode only qualified dots render —
++    /// ones that were on screen while enough fingers were down. A dot that
++    /// never qualified must not pop in at lift just to fade out.
++    pub fn renderable_dots(&self, mode: ShowTouchPoints) -> Vec<(Point<f64, Logical>, f64)> {
++        match mode {
++            ShowTouchPoints::Off => Vec::new(),
++            ShowTouchPoints::All => self
++                .dots
++                .values()
++                .map(|dot| match dot {
++                    Dot::Active { pos, appear, .. } => (*pos, appear.value()),
++                    Dot::Released { pos, fade, .. } => (*pos, fade.value()),
++                })
++                .collect(),
++            ShowTouchPoints::Gestures => self
++                .dots
++                .values()
++                .filter_map(|dot| match dot {
++                    Dot::Active {
++                        pos,
++                        appear,
++                        qualified: true,
++                    } => Some((*pos, appear.value())),
++                    Dot::Released {
++                        pos,
++                        fade,
++                        qualified: true,
++                    } => Some((*pos, fade.value())),
++                    _ => None,
++                })
++                .collect(),
++        }
++    }
++
++    pub fn render<R: NiriRenderer>(
++        &self,
++        renderer: &mut R,
++        output: &Output,
++        output_geometry: Rectangle<f64, Logical>,
++        mode: ShowTouchPoints,
++        push: &mut dyn FnMut(PrimaryGpuTextureRenderElement),
++    ) {
++        if self.dots.is_empty() {
++            return;
++        }
++
++        let scale = output.current_scale().fractional_scale();
++
++        let mut buffers = self.buffers.borrow_mut();
++        let buffer = buffers
++            .entry(NotNan::new(scale).unwrap())
++            .or_insert_with(|| render_dot_texture(renderer.as_gles_renderer(), scale).ok())
++            .clone();
++        let Some(buffer) = buffer else {
++            return;
++        };
++
++        let size = buffer.logical_size();
++        let half = Point::from((size.w / 2., size.h / 2.));
++
++        for (pos, alpha) in self.renderable_dots(mode) {
++            // Output-relative dot center.
++            let center = pos - output_geometry.loc;
++
++            // Cull dots far outside this output (touch maps to one output,
++            // this just skips the neighbors in multi-monitor setups).
++            let margin = DOT_DIAMETER;
++            if center.x < -margin
++                || center.y < -margin
++                || center.x > output_geometry.size.w + margin
++                || center.y > output_geometry.size.h + margin
++            {
++                continue;
++            }
++
++            let location = center - half;
++            let location = location.to_physical_precise_round(scale).to_logical(scale);
++
++            let elem = TextureRenderElement::from_texture_buffer(
++                buffer.clone(),
++                location,
++                alpha as f32,
++                None,
++                None,
++                Kind::Unspecified,
++            );
++            push(PrimaryGpuTextureRenderElement(elem));
++        }
++    }
++}
++
++/// Draws the dot: a white disc with a dark rim, readable on any background.
++fn render_dot_texture(
++    renderer: &mut GlesRenderer,
++    scale: f64,
++) -> anyhow::Result<TextureBuffer<GlesTexture>> {
++    let _span = tracy_client::span!("touch_points::render_dot_texture");
++
++    // A couple of physical pixels of room for the rim.
++    let margin: i32 = 2;
++    let diameter_px: i32 =
++        to_physical_precise_round::<i32>(scale, DOT_DIAMETER).max(1) + margin * 2;
++
++    let surface = ImageSurface::create(cairo::Format::ARgb32, diameter_px, diameter_px)?;
++    let cr = cairo::Context::new(&surface)?;
++
++    let center = f64::from(diameter_px) / 2.;
++    let radius = f64::from(diameter_px - margin * 2) / 2.;
++
++    // Dark rim.
++    cr.set_source_rgba(0., 0., 0., 0.35);
++    cr.arc(center, center, radius, 0., std::f64::consts::TAU);
++    cr.fill()?;
++
++    // White disc on top.
++    cr.set_source_rgba(1., 1., 1., 0.7);
++    cr.arc(center, center, radius - 2., 0., std::f64::consts::TAU);
++    cr.fill()?;
++
++    drop(cr);
++    let data = surface.take_data().unwrap();
++    let buffer = TextureBuffer::from_memory(
++        renderer,
++        &data,
++        Fourcc::Argb8888,
++        (diameter_px, diameter_px),
++        false,
++        scale,
++        Transform::Normal,
++        Vec::new(),
++    )?;
++
++    Ok(buffer)
++}
++
++#[cfg(test)]
++mod tests {
++    use std::time::Duration;
++
++    use super::*;
++
++    fn slot(id: u32) -> TouchSlot {
++        TouchSlot::from(Some(id))
++    }
++
++    fn touch_points_at(ms: u64) -> (Clock, TouchPoints) {
++        let clock = Clock::with_time(Duration::from_millis(ms));
++        let tp = TouchPoints::new(clock.clone());
++        (clock, tp)
++    }
++
++    #[test]
++    fn down_shows_dot_and_up_fades_it_out() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        tp.down(slot(1), Point::from((100., 200.)), 3);
++        assert!(!tp.is_empty());
++        assert!(tp.are_animations_ongoing());
++
++        // Well past the fade-out duration after lifting.
++        clock.set_unadjusted(Duration::from_millis(1000));
++        tp.up(slot(1));
++        assert!(!tp.is_empty(), "released dot lingers while fading");
++
++        clock.set_unadjusted(Duration::from_millis(2000));
++        tp.advance_animations();
++        assert!(tp.is_empty(), "dot removed once the fade finishes");
++    }
++
++    #[test]
++    fn motion_moves_only_active_dots() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        tp.down(slot(1), Point::from((0., 0.)), 3);
++        tp.motion(slot(1), Point::from((50., 60.)), 3);
++
++        clock.set_unadjusted(Duration::from_millis(500));
++        tp.up(slot(1));
++
++        // Motion after lift must not move the fading dot.
++        tp.motion(slot(1), Point::from((999., 999.)), 3);
++        let Dot::Released { pos, .. } = tp.dots.get(&slot(1)).unwrap() else {
++            panic!("expected a released dot");
++        };
++        assert_eq!(*pos, Point::from((50., 60.)));
++
++        // Unknown slots are ignored.
++        tp.motion(slot(7), Point::from((1., 1.)), 3);
++    }
++
++    #[test]
++    fn appear_animation_settles() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        tp.down(slot(1), Point::from((10., 10.)), 3);
++        assert!(tp.are_animations_ongoing());
++
++        clock.set_unadjusted(Duration::from_millis(500));
++        assert!(!tp.are_animations_ongoing(), "appear finished");
++
++        // The dot stays while the finger is down.
++        tp.advance_animations();
++        assert!(!tp.is_empty());
++    }
++
++    #[test]
++    fn cancel_fades_everything() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        tp.down(slot(1), Point::from((0., 0.)), 3);
++        tp.down(slot(2), Point::from((10., 10.)), 3);
++
++        clock.set_unadjusted(Duration::from_millis(100));
++        tp.cancel();
++        assert_eq!(tp.dots.len(), 2);
++
++        clock.set_unadjusted(Duration::from_millis(1000));
++        tp.advance_animations();
++        assert!(tp.is_empty());
++    }
++
++    #[test]
++    fn gestures_mode_needs_enough_fingers() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        // Two fingers down: below the gesture threshold, no dots render.
++        tp.down(slot(1), Point::from((0., 0.)), 3);
++        tp.down(slot(2), Point::from((10., 10.)), 3);
++        clock.set_unadjusted(Duration::from_millis(500));
++        assert!(tp.renderable_dots(ShowTouchPoints::Gestures).is_empty());
++
++        // Third finger joins: now all three render, including the two early
++        // ones that started below the threshold.
++        tp.down(slot(3), Point::from((20., 20.)), 3);
++        assert_eq!(tp.renderable_dots(ShowTouchPoints::Gestures).len(), 3);
++
++        // All mode shows everything, even a single finger.
++        let (mut clock, mut tp2) = touch_points_at(0);
++        tp2.down(slot(1), Point::from((0., 0.)), 3);
++        clock.set_unadjusted(Duration::from_millis(500));
++        assert_eq!(tp2.renderable_dots(ShowTouchPoints::All).len(), 1);
++
++        // Off mode never renders.
++        assert!(tp2.renderable_dots(ShowTouchPoints::Off).is_empty());
++    }
++
++    #[test]
++    fn unqualified_dot_does_not_appear_at_lift() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        // One finger touches and moves: never enough for a gesture.
++        tp.down(slot(1), Point::from((0., 0.)), 3);
++        tp.motion(slot(1), Point::from((50., 60.)), 3);
++        assert!(tp.renderable_dots(ShowTouchPoints::Gestures).is_empty());
++
++        // Regression: lifting an invisible dot must not flash it on screen
++        // just to fade out.
++        clock.set_unadjusted(Duration::from_millis(500));
++        tp.up(slot(1));
++        assert!(tp.renderable_dots(ShowTouchPoints::Gestures).is_empty());
++    }
++
++    #[test]
++    fn released_dots_finish_fading_in_gestures_mode() {
++        let (mut clock, mut tp) = touch_points_at(0);
++
++        tp.down(slot(1), Point::from((0., 0.)), 3);
++        tp.down(slot(2), Point::from((10., 10.)), 3);
++        tp.down(slot(3), Point::from((20., 20.)), 3);
++        clock.set_unadjusted(Duration::from_millis(500));
++
++        // Two lift: the lifted dots were on screen during the gesture, so
++        // they keep rendering while they fade out. The finger still down was
++        // part of the gesture too, so it stays visible until it lifts.
++        tp.up(slot(1));
++        tp.up(slot(2));
++        let visible = tp.renderable_dots(ShowTouchPoints::Gestures);
++        assert_eq!(visible.len(), 3, "two fading dots plus the finger still down");
++
++        clock.set_unadjusted(Duration::from_millis(2000));
++        tp.up(slot(3));
++
++        // Past every fade duration: all three dots are gone.
++        clock.set_unadjusted(Duration::from_millis(3000));
++        tp.advance_animations();
++        assert!(tp.is_empty());
++    }
++}
+-- 
+2.55.0
+

@@ -1,0 +1,39 @@
+From 5baf142f22dabf86d9ebc7e4038bc687d8ace239 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Sat, 22 Aug 2026 14:13:26 +0100
+Subject: [PATCH 7/8] test(config): refresh the parse insta snapshot for the
+ touchscreen gesture fields
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The gesture patches added fields (tap, tap-4, swipe-4-*, touchscreen-edge-swipe)
+but never updated the assert_debug_snapshot, so tests::parse has been failing
+silently — every run (maintainer ritual and CI) filters by 'touch_'.
+---
+ niri-config/src/lib.rs | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index d359e6c4..64d9ee5e 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -1664,6 +1664,15 @@ mod tests {
+                 touchscreen_swipe: TouchscreenSwipe {
+                     off: false,
+                     fingers: 3,
++                    tap: Some(
++                        MaximizeColumn,
++                    ),
++                    tap_4: None,
++                    swipe_4_down: None,
++                    swipe_4_up: None,
++                },
++                touchscreen_edge_swipe: TouchscreenEdgeSwipe {
++                    spawn: [],
+                 },
+             },
+             overview: Overview {
+-- 
+2.55.0
+
