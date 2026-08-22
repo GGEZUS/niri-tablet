@@ -9,7 +9,7 @@
 # rustc's default lld they break linking of the libspa static C shim.
 pkgname=niri-tablet
 pkgver=26.04.10.g387c13de
-pkgrel=2
+pkgrel=3
 pkgdesc='A scrollable-tiling Wayland compositor, with touchscreen gestures'
 url='https://github.com/GGEZUS/niri-tablet'
 arch=('x86_64' 'aarch64')
@@ -55,6 +55,12 @@ options=('!strip')
 
 prepare() {
     cd niri
+    # A previous build's patches may still be applied. makepkg's branch reset
+    # restores tracked files but leaves files the old series CREATED (untracked)
+    # in place — patch then refuses to recreate them and prepare() dies. Reset
+    # both before applying (hit upgrading 26.04.6 → 26.04.10).
+    git reset --hard
+    git clean -fd
     local src
     for src in "${source[@]}"; do
         case "$src" in
