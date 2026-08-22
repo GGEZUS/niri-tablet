@@ -1,8 +1,9 @@
 From efd22ef13b254608f42a9b7acf665e3de6d223af Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Sat, 22 Aug 2026 21:06:55 +0100
-Subject: [PATCH 9/9] =?UTF-8?q?feat(input):=20hold-swipe=20touchscreen=20g?=
- =?UTF-8?q?estures=20=E2=80=94=20move=20windows=20with=20a=20held=20swipe?=
+Subject: [PATCH 09/10] =?UTF-8?q?feat(input):=20hold-swipe=20touchscreen?=
+ =?UTF-8?q?=20gestures=20=E2=80=94=20move=20windows=20with=20a=20held=20sw?=
+ =?UTF-8?q?ipe?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

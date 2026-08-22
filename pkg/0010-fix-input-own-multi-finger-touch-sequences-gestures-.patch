@@ -1,0 +1,359 @@
+From 387c13de68d228780046654e884a6771f2041fc2 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Sat, 22 Aug 2026 22:04:35 +0100
+Subject: [PATCH 10/10] =?UTF-8?q?fix(input):=20own=20multi-finger=20touch?=
+ =?UTF-8?q?=20sequences=20=E2=80=94=20gestures=20stop=20leaking=20to=20app?=
+ =?UTF-8?q?s?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two bugs made app-level interactions fire during our gestures:
+
+1. TouchSwipeGrab "swallowed" by passing a null focus through to
+   TouchInnerHandle::motion — but smithay's TouchInternal::motion ignores
+   that argument entirely and delivers to the focus recorded at down
+   time. Every motion of an animated or discrete gesture kept streaming
+   to the surface under the fingers: browsers pinch-zoomed from 3-finger
+   swipes, terminals drag-selected and touch-scrolled under hold-swipes.
+
+2. Ending those touches via TouchHandle::cancel() does not work:
+   TouchInternal::cancel skips any slot whose events were already
+   frame-flushed — which is all of them, since every event is followed
+   by a frame. It sends nothing and clears nothing.
+
+The fix, in three parts:
+
+- Ownership: once enough fingers for a touchscreen gesture are down
+  (touchscreen-swipe.fingers, gestures enabled, no other grab active),
+  niri latches touch_input_suspended, ends the touches the client has
+  already seen with synthetic up events plus a frame — a clean, universal
+  end for in-progress app gestures — and stops delivering down/motion/up
+  until the last finger lifts (tracker back to idle). The single-finger
+  edge tracker is reset so it cannot fire mid-sequence.
+
+- TouchSwipeGrab now swallows for real: the down/up/motion pass-through
+  calls are gone; the grab feeds only its own tracker. When a gesture
+  grab installs at recognition the suspension clears, because the grab
+  receives events via the normal dispatch and no longer forwards them.
+
+- The edge-swipe install ends its initiating finger the same way
+  (synthetic up) before the swallow grab takes over; previously that
+  touch stayed outstanding on the client forever.
+
+Gesture behavior is unchanged — taps, flicks, hold-swipes and the
+animated swipes run exactly as before. Single- and two-finger input
+(including app pinch-zoom) is untouched. Escape hatch for apps needing
+N-finger touches: raise touchscreen-swipe.fingers.
+---
+ src/input/mod.rs                 | 113 ++++++++++++++++++++++++++-----
+ src/input/touch_swipe_grab.rs    |  17 +++--
+ src/input/touch_swipe_tracker.rs |  47 +++++++++++++
+ src/niri.rs                      |   6 ++
+ 4 files changed, 157 insertions(+), 26 deletions(-)
+
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index c4b370c4..a5822a0a 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4089,6 +4089,50 @@ impl State {
+             .touch_swipe_tracker
+             .touch_down(slot, pos, Duration::from_micros(evt.time()));
+ 
++        // Gesture ownership: once enough fingers for a touchscreen gesture are
++        // down, the compositor owns the whole sequence until the last finger
++        // lifts. Clients have already seen the earlier fingers — cancel those
++        // touches so apps abort any pinch/drag they started — and stop
++        // delivering new ones. This keeps e.g. a browser's pinch-zoom from
++        // reacting to the start of a 3-finger swipe, or a terminal from
++        // drag-selecting under a hold-swipe.
++        let gestures_enabled =
++            !self.niri.config.borrow().gestures.touchscreen_swipe.off;
++        if gestures_enabled
++            && !self.niri.touch_input_suspended
++            && !handle.is_grabbed()
++            && (self.niri.touch_swipe_tracker.is_recognizing()
++                || self.niri.touch_swipe_tracker.is_active())
++        {
++            debug!("touch: multi-finger gesture owns the touch stream");
++            self.niri.touch_input_suspended = true;
++            // End the touches the client already sees (the first fingers
++            // that landed) with synthetic lift events — a clean, universal
++            // end for in-progress app gestures such as pinch-zoom and text
++            // selection. TouchHandle::cancel() cannot be used here: smithay
++            // skips slots whose events were already frame-flushed, so it
++            // would send nothing.
++            for tracked_slot in self.niri.touch_swipe_tracker.slots().collect::<Vec<_>>() {
++                let serial = SERIAL_COUNTER.next_serial();
++                handle.up(
++                    self,
++                    &UpEvent {
++                        slot: tracked_slot,
++                        serial,
++                        time: evt.time_msec(),
++                    },
++                );
++            }
++            handle.frame(self);
++            self.niri.touch_edge_swipe_tracker.reset();
++        }
++
++        if self.niri.touch_input_suspended {
++            // The gesture owns this sequence: swallow delivery to surfaces.
++            self.niri.pointer_visibility = PointerVisibility::Disabled;
++            return;
++        }
++
+         // Feed the bottom-edge swipe tracker (e.g. launcher gesture).
+         if !self
+             .niri
+@@ -4282,23 +4326,32 @@ impl State {
+         // Bottom-edge swipe tracker.
+         self.niri.touch_edge_swipe_tracker.touch_up(slot);
+ 
+-        if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
+-            if capture {
+-                self.confirm_screenshot(true);
+-            } else {
+-                self.niri.queue_redraw_all();
+-            }
++        // The last finger lifted: the gesture no longer owns the touch
++        // stream, resume normal client delivery.
++        if self.niri.touch_input_suspended && self.niri.touch_swipe_tracker.is_idle() {
++            debug!("touch: multi-finger gesture ended, resuming client input");
++            self.niri.touch_input_suspended = false;
+         }
+ 
+-        let serial = SERIAL_COUNTER.next_serial();
+-        handle.up(
+-            self,
+-            &UpEvent {
+-                slot,
+-                serial,
+-                time: evt.time_msec(),
+-            },
+-        );
++        if !self.niri.touch_input_suspended {
++            if let Some(capture) = self.niri.screenshot_ui.pointer_up(Some(slot)) {
++                if capture {
++                    self.confirm_screenshot(true);
++                } else {
++                    self.niri.queue_redraw_all();
++                }
++            }
++
++            let serial = SERIAL_COUNTER.next_serial();
++            handle.up(
++                self,
++                &UpEvent {
++                    slot,
++                    serial,
++                    time: evt.time_msec(),
++                },
++            );
++        }
+ 
+         // Run a deferred discrete-gesture action now that all grab callbacks
+         // (and the seat's touch lock) have returned.
+@@ -4417,6 +4470,11 @@ impl State {
+                                     location: pos,
+                                 };
+ 
++                                // The gesture grab owns the stream from here and
++                                // does its own swallowing (passes null focus), so
++                                // input suspension is no longer needed.
++                                self.niri.touch_input_suspended = false;
++
+                                 if let Some(action) = discrete_action {
+                                     let grab = TouchSwipeGrab::new_discrete(
+                                         start_data, output, tracker, action,
+@@ -4464,7 +4522,9 @@ impl State {
+         }
+ 
+         // Bottom-edge swipe (e.g. launcher gesture).
+-        if self.niri.touch_edge_swipe_tracker.touch_motion(slot, pos) {
++        if !self.niri.touch_input_suspended
++            && self.niri.touch_edge_swipe_tracker.touch_motion(slot, pos)
++        {
+             let dominated = self.niri.screenshot_ui.is_open() || self.niri.window_mru_ui.is_open();
+             if dominated {
+                 self.niri.touch_edge_swipe_tracker.reset();
+@@ -4485,7 +4545,20 @@ impl State {
+                 }
+ 
+                 // Swallow the rest of this gesture so surfaces under the finger
+-                // don't receive a stray drag.
++                // don't receive a stray drag. End the touch the client has
++                // already seen with a synthetic lift first — the grab will
++                // swallow the real one (TouchHandle::cancel is unreliable,
++                // see the gesture-ownership handling in on_touch_down).
++                let up_serial = SERIAL_COUNTER.next_serial();
++                handle.up(
++                    self,
++                    &UpEvent {
++                        slot,
++                        serial: up_serial,
++                        time: evt.time_msec(),
++                    },
++                );
++
+                 let start_data = TouchGrabStartData {
+                     focus: None,
+                     slot,
+@@ -4502,6 +4575,11 @@ impl State {
+             }
+         }
+ 
++        if self.niri.touch_input_suspended {
++            // The gesture owns this sequence: swallow delivery to surfaces.
++            return;
++        }
++
+         if let Some(output) = self.niri.screenshot_ui.selection_output().cloned() {
+             let geom = self.niri.global_space.output_geometry(&output).unwrap();
+             let mut point = (pos - geom.loc.to_f64())
+@@ -4552,6 +4630,7 @@ impl State {
+         };
+         // Reset the pre-grab tracker so stale state doesn't carry over.
+         self.niri.touch_swipe_tracker.reset();
++        self.niri.touch_input_suspended = false;
+         if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
+             && !self.niri.touch_points.is_empty()
+         {
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index a099033c..fc7022ac 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -212,10 +212,11 @@ impl TouchGrab<State> for TouchSwipeGrab {
+         handle: &mut TouchInnerHandle<'_, State>,
+         _focus: Option<(<State as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
+         event: &DownEvent,
+-        seq: Serial,
++        _seq: Serial,
+     ) {
+-        handle.down(data, None, event, seq);
+-
++        // Swallowed — passing a null focus through does NOT stop delivery:
++        // smithay routes touch motion to the focus recorded at down time, so
++        // the gesture would keep driving the surface under the fingers.
+         let timestamp = Duration::from_millis(u64::from(event.time));
+         let ev = self.tracker.touch_down(event.slot, event.location, timestamp);
+         if self.handle_gesture_event(ev, data) {
+@@ -228,10 +229,9 @@ impl TouchGrab<State> for TouchSwipeGrab {
+         data: &mut State,
+         handle: &mut TouchInnerHandle<'_, State>,
+         event: &UpEvent,
+-        seq: Serial,
++        _seq: Serial,
+     ) {
+-        handle.up(data, event, seq);
+-
++        // Swallowed (see down).
+         let timestamp = Duration::from_millis(u64::from(event.time));
+         let ev = self.tracker.touch_up(event.slot, timestamp);
+         if self.handle_gesture_event(ev, data) {
+@@ -245,10 +245,9 @@ impl TouchGrab<State> for TouchSwipeGrab {
+         handle: &mut TouchInnerHandle<'_, State>,
+         _focus: Option<(<State as SeatHandler>::TouchFocus, Point<f64, Logical>)>,
+         event: &MotionEvent,
+-        seq: Serial,
++        _seq: Serial,
+     ) {
+-        handle.motion(data, None, event, seq);
+-
++        // Swallowed (see down).
+         let timestamp = Duration::from_millis(u64::from(event.time));
+         let ev = self
+             .tracker
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index ff5c63c0..9d8d6760 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -132,6 +132,27 @@ impl TouchSwipeGestureTracker {
+         self.phase == Phase::Active
+     }
+ 
++    /// Returns `true` once enough fingers are down for a gesture (pre-threshold).
++    ///
++    /// While this holds, the sequence is compositor-owned: client delivery is
++    /// suspended so apps don't gesture-ize (pinch, drag-select) the touches.
++    pub fn is_recognizing(&self) -> bool {
++        self.phase == Phase::Recognizing
++    }
++
++    /// Returns `true` when no sequence is in progress (no slots tracked).
++    pub fn is_idle(&self) -> bool {
++        self.phase == Phase::Idle
++    }
++
++    /// The currently tracked touch slots.
++    ///
++    /// Used to end client-visible touches with synthetic lift events when the
++    /// compositor takes ownership of the sequence.
++    pub fn slots(&self) -> impl Iterator<Item = TouchSlot> + '_ {
++        self.slots.keys().copied()
++    }
++
+     /// Returns the locked direction of the current gesture.
+     ///
+     /// Only meaningful when `is_active()` returns `true`.
+@@ -453,6 +474,32 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn phase_accessors_track_finger_count() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        assert!(tracker.is_idle());
++
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        // Below the gesture finger count: not compositor-owned yet.
++        assert!(tracker.is_idle());
++
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++        assert!(tracker.is_recognizing());
++
++        // Cross the threshold: active (still compositor-owned).
++        tracker.touch_motion(slot(0), pt(80.0, 100.0), ts(10));
++        tracker.touch_motion(slot(1), pt(90.0, 100.0), ts(10));
++        tracker.touch_motion(slot(2), pt(100.0, 100.0), ts(10));
++        assert!(tracker.is_active());
++
++        // End the gesture: back to idle, client delivery can resume.
++        tracker.touch_up(slot(0), ts(20));
++        tracker.touch_up(slot(1), ts(21));
++        tracker.touch_up(slot(2), ts(22));
++        assert!(tracker.is_idle());
++    }
++
+     #[test]
+     fn hold_swipe_detected_after_slow_threshold_crossing() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+diff --git a/src/niri.rs b/src/niri.rs
+index 72c6434f..1db3283c 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -376,6 +376,11 @@ pub struct Niri {
+     /// Action deferred by a discrete touch gesture grab, to be run from
+     /// `on_touch_up` after all grab callbacks (and their locks) have returned.
+     pub pending_touch_action: Option<niri_config::Action>,
++    /// A multi-finger touchscreen gesture owns the touch stream: client
++    /// delivery is suspended (already-delivered touches were cancelled) until
++    /// the last finger lifts, so apps don't pinch-zoom or drag-select from the
++    /// early phase of one of our gestures.
++    pub touch_input_suspended: bool,
+     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
+     pub vertical_wheel_tracker: ScrollTracker,
+     pub horizontal_wheel_tracker: ScrollTracker,
+@@ -2594,6 +2599,7 @@ impl Niri {
+             ),
+             touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker::default(),
+             pending_touch_action: None,
++            touch_input_suspended: false,
+             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
+             vertical_wheel_tracker: ScrollTracker::new(120),
+             horizontal_wheel_tracker: ScrollTracker::new(120),
+-- 
+2.55.0
+

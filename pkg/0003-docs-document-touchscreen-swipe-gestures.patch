@@ -1,7 +1,7 @@
 From ee62a17f39abe0ef1760c8fecf7233873267ec5c Mon Sep 17 00:00:00 2001
 From: Mario St Jr <mariostjr@noctalia.dev>
 Date: Sun, 29 Mar 2026 12:17:38 -0300
-Subject: [PATCH 3/9] docs: document touchscreen swipe gestures
+Subject: [PATCH 03/10] docs: document touchscreen swipe gestures
 
 Add touchscreen section to the Gestures wiki page and document the
 touchscreen-swipe configuration options.

@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%209%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2010%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 
 ## Gestures
@@ -41,6 +41,16 @@ held swipe up/down moves the focused window to the workspace above/below
 your fingers lingered below the movement threshold decides. Remove the `hold`
 block (or a single direction) and held swipes behave like quick ones again.
 
+### Gesture ownership
+
+From the moment `touchscreen-swipe.fingers` fingers are down, the whole touch
+sequence belongs to the compositor: apps never see it (touches they already
+received are cancelled), and normal delivery resumes when the last finger
+lifts. So a 3-finger swipe doesn't pinch-zoom a browser or drag-select
+terminal text mid-gesture. Single- and two-finger input — including app
+pinch-zoom — is untouched. If an app genuinely needs 3-finger touches, raise
+`fingers`.
+
 ### Touch point visualization
 
 `show-touch-points` renders translucent dots that follow your fingers —
@@ -64,10 +74,12 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 9 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 10 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
-  flicks, hold-swipes, the optional edge swipe, and touch point
+  flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
+  client-side so apps don't react to them), the optional edge swipe, and touch
+  point
   visualization. The animated swipes run through the same spring-physics
   pipeline as touchpad gestures — rotation-proof logical coordinates, live
   follow, inertia.
@@ -194,7 +206,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 9 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 10 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.
