@@ -11,6 +11,7 @@ the keyboard detached.
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 [![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2010%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
+[![Stars](https://img.shields.io/github/stars/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/stargazers)
 
 ## Gestures
 
