@@ -5,9 +5,6 @@ touchscreen gestures, an on-screen keyboard that adapts to screen orientation,
 and automatic display rotation — everything needed to run a niri session with
 the keyboard detached.
 
-Built and daily-driven on a Microsoft Surface Go 2 running Arch Linux, and
-verified from a fresh install on a ThinkPad T480.
-
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
 [![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%208%20patches-blueviolet)](#status--credits)
@@ -175,10 +172,14 @@ test.kdl   minimal config for nested (in-window) testing
 niri/      maintainer's dev clone for rebasing — not part of the repo
 ```
 
+## Tested hardware
+
+- **Microsoft Surface Go 2** — built and daily-driven here.
+- **ThinkPad T480** — verified from a fresh install (the portability test).
+
 ## Status & credits
 
-- Patchset: `v26.04 + 8 patches`, unit-tested (full suite runs in CI) and
-  hardware-validated on a Surface Go 2 and a ThinkPad T480.
+- Patchset: `v26.04 + 8 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.
