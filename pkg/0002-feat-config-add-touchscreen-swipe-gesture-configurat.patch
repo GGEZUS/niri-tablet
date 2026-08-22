@@ -1,7 +1,7 @@
 From 5c8cac2cad67d6bad1eb769fc17947666753b0b6 Mon Sep 17 00:00:00 2001
 From: Mario St Jr <mariostjr@noctalia.dev>
 Date: Sun, 29 Mar 2026 12:17:34 -0300
-Subject: [PATCH 2/8] feat(config): add touchscreen-swipe gesture configuration
+Subject: [PATCH 2/9] feat(config): add touchscreen-swipe gesture configuration
 
 Add configurable touchscreen swipe settings to the gestures block:
 

@@ -8,7 +8,7 @@
 # NB: makepkg's exported flags are deliberately unset in build() — with
 # rustc's default lld they break linking of the libspa static C shim.
 pkgname=niri-tablet
-pkgver=26.04.8.ged74b55a
+pkgver=26.04.9.gefd22ef1
 pkgrel=2
 pkgdesc='A scrollable-tiling Wayland compositor, with touchscreen gestures'
 url='https://github.com/GGEZUS/niri-tablet'
@@ -32,17 +32,19 @@ source=(
     '0006-fix-input-count-late-joining-fingers-and-fix-deadloc.patch'
     '0007-test-config-refresh-the-parse-insta-snapshot-for-the.patch'
     '0008-feat-ui-show-touch-points-compositor-rendered-touch-.patch'
+    '0009-feat-input-hold-swipe-touchscreen-gestures-move-wind.patch'
 )
 sha256sums=(
     'SKIP'
-    '4acec708fb1dff0084ea8aae5be103de5e5e8df5a34d4f0aded5a71b1ab7c729'
-    'c993687f231598a14a3441ca02b6f547a9fe6f2a64292b1f0ddf58c44163f18e'
-    '150ef447c24a08729fd4bad11e0120c363fca84d7930507f1b7190e0d974f7d7'
-    '29657dc5a2e3d97f4d035917ba374660e7ee2705a3b328f1bf05c76b95299825'
-    '04e1fadfee87f3a5928e355cb388494e22e7c28728b9680437d4b51bb976fd34'
-    '3559b66959b798789d2dc6ab14ea3838e8521f6c4ceb28e23f11f91bbe35311e'
-    'b322a72944c1d1984c8565e4c2ca915052f7bd655f5a5dafbf549e2bfc30b0a0'
-    '4c6390242881b2e8bad68f3491403d3930b677160387af4cf6cefb7e811e7e1b'
+    'eeca3ba7c2690cedd7b8b94b3bf237252dd9c0ed9a8f9cd0f80588a5610625d6'
+    'daa0424a0d676d0f956db425a649f0fcd8328bdd6a70a6bc77fab75a0590c12b'
+    '01b5043c36b2a26a9953bb4d6bbf0dd937be5c7c459e655c042539503e304c3d'
+    'f5e03b6f09e65dda959297f8cde4e85c7203c9776855f53ee87bb43f614c74a6'
+    '1f51166ff71565931e5ce82a0a7cff9512f7927f1c212f9673c135589004d751'
+    '44b98443afeb6bf79a9412d2fe78bf2d9fdc1ea9c97afab306aa56b0b2104388'
+    '85b4902262113c1716b77f40d93c79dbab2352bb44ad06b2713251f742dc7692'
+    '47714d2285654e023bf18bf861877c01a73bc27c0c83ad557e4e0c56524287c8'
+    'b9840aaf5a974dd336744c2937a6d541563e5436a182ba7efa8cdee3c2f41f12'
 )
 # Keep debug symbols on purpose: a compositor panic takes the whole session
 # down, and the journal backtrace is only readable with them (~128 MB binary

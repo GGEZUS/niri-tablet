@@ -1,7 +1,7 @@
 From 09e808fbf80b8c3b66fd77977885da2e83db3597 Mon Sep 17 00:00:00 2001
 From: Mario St Jr <mariostjr@noctalia.dev>
 Date: Sun, 29 Mar 2026 12:17:26 -0300
-Subject: [PATCH 1/8] feat(input): add touchscreen 3-finger swipe gestures
+Subject: [PATCH 1/9] feat(input): add touchscreen 3-finger swipe gestures
 
 Add native touchscreen gesture support that replicates the existing
 touchpad 3-finger swipe behavior for workspace switching (vertical)

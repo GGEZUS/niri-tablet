@@ -1,7 +1,7 @@
 From 32c2a38e4b72905cab25d2ceee13e806a47f2fc8 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Thu, 20 Aug 2026 18:05:36 +0100
-Subject: [PATCH 4/8] feat(input): touchscreen tap and bottom-edge swipe
+Subject: [PATCH 4/9] feat(input): touchscreen tap and bottom-edge swipe
  gestures
 
 Extend the touchscreen swipe patchset:

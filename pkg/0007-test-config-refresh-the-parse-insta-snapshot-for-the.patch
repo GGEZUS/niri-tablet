@@ -1,7 +1,7 @@
 From 5baf142f22dabf86d9ebc7e4038bc687d8ace239 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Sat, 22 Aug 2026 14:13:26 +0100
-Subject: [PATCH 7/8] test(config): refresh the parse insta snapshot for the
+Subject: [PATCH 7/9] test(config): refresh the parse insta snapshot for the
  touchscreen gesture fields
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

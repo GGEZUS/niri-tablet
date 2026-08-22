@@ -36,6 +36,19 @@ gestures {
         // 4-finger flick up: toggle the on-screen keyboard
         // (scripts/niri-osk.sh from this repo, at ~/.local/bin/niri-osk.sh).
         swipe-4-up { spawn-sh "~/.local/bin/niri-osk.sh"; }
+
+        // Hold-swipe: press, rest the fingers still for a moment (~400ms),
+        // then swipe — the dominant direction runs its action. Quick swipes
+        // are unaffected (they keep driving the animated view/carousel);
+        // unset a direction and held swipes that way fall back to animated.
+        // Below: held swipe moves the focused window left/right one column
+        // or up/down one workspace — any action can be bound instead.
+        hold {
+            left { move-column-left; }
+            right { move-column-right; }
+            up { move-window-to-workspace-up; }
+            down { move-window-to-workspace-down; }
+        }
     }
 
     // Bottom-edge swipe — implemented but unbound (default off).

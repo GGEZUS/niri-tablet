@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%208%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%209%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 
 ## Gestures
@@ -19,6 +19,7 @@ the keyboard detached.
 | 3-finger drag, horizontal | scroll the view across columns (animated) |
 | 3-finger drag, vertical | workspace carousel (animated) |
 | 3-finger tap | maximize / restore the focused column |
+| 3-finger hold + swipe | move the focused window: left/right a column, up/down a workspace |
 | 4-finger tap | window overview (built-in; any launcher binds in its place) |
 | 4-finger flick down | close the focused window |
 | 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) |
@@ -28,6 +29,17 @@ niri action, same as keybinds. The example `config/gestures.kdl` binds 4-tap
 to the built-in `toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are
 one uncomment away. A single-finger bottom-edge swipe is also
 implemented but unbound by default. Touchpad behavior is untouched.
+
+### Hold-swipe: move windows
+
+Rest three (or more) fingers still for a moment (~400ms), then swipe: instead
+of the animated view scroll, the dominant direction runs a discrete action.
+The example config binds it to window management — held swipe left/right
+moves the focused column (`move-column-left`/`right`, like Ctrl+Mod+arrows),
+held swipe up/down moves the focused window to the workspace above/below
+(`move-window-to-workspace-up`/`down`). Quick swipes are unaffected: how long
+your fingers lingered below the movement threshold decides. Remove the `hold`
+block (or a single direction) and held swipes behave like quick ones again.
 
 ### Touch point visualization
 
@@ -52,12 +64,13 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 8 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 9 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
-  flicks, the optional edge swipe, and touch point visualization. The
-  animated swipes run through the same spring-physics pipeline as touchpad
-  gestures — rotation-proof logical coordinates, live follow, inertia.
+  flicks, hold-swipes, the optional edge swipe, and touch point
+  visualization. The animated swipes run through the same spring-physics
+  pipeline as touchpad gestures — rotation-proof logical coordinates, live
+  follow, inertia.
 - **`config/gestures.kdl`** — the gesture config block (see above).
 - **`scripts/`** — OSK toggle + auto-rotate helpers (work on stock niri too).
 
@@ -181,7 +194,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 8 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 9 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.

@@ -1,0 +1,468 @@
+From efd22ef13b254608f42a9b7acf665e3de6d223af Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Sat, 22 Aug 2026 21:06:55 +0100
+Subject: [PATCH 9/9] =?UTF-8?q?feat(input):=20hold-swipe=20touchscreen=20g?=
+ =?UTF-8?q?estures=20=E2=80=94=20move=20windows=20with=20a=20held=20swipe?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Press 3+ fingers, rest them still for a moment (~400ms), then swipe:
+the dominant direction resolves to a discrete action instead of the
+animated view scroll / workspace carousel. Default bindings (in the
+example config) move the focused column left/right and the focused
+window to the workspace above/below, like Ctrl+Mod+Left/Right and
+Ctrl+Mod+workspace-arrow keybinds.
+
+Classification happens at threshold-crossing time, libinput-style:
+the tracker timestamps when the minimum finger count was reached and
+emits HoldSwipe instead of Begin if the fingers lingered that long
+before crossing the 16px movement threshold. No timers involved — the
+distinction is pure event state, so it stays unit-testable.
+
+- niri-config: touchscreen-swipe { hold { left/right/up/down { … } } },
+  any action bindable per direction, unbound directions fall back to
+  the animated gesture, absent node disables the feature entirely.
+- The handler routes a bound HoldSwipe through the existing discrete
+  grab (TouchSwipeGrab::new_discrete), inheriting the deferred
+  pending_touch_action execution (seat-touch deadlock rule) and event
+  swallowing from the 4-finger flicks.
+- A quick 4-finger flick still wins when the swipe was fast; how long
+  the fingers lingered decides which action set applies.
+---
+ niri-config/src/gestures.rs      |  69 ++++++++++++++
+ niri-config/src/lib.rs           |   6 ++
+ src/input/mod.rs                 |  38 +++++++-
+ src/input/touch_swipe_grab.rs    |   9 ++
+ src/input/touch_swipe_tracker.rs | 153 ++++++++++++++++++++++++++++++-
+ 5 files changed, 270 insertions(+), 5 deletions(-)
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 48a8fec6..0646b928 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -165,6 +165,10 @@ pub struct TouchscreenSwipe {
+     /// Discrete action for a vertical swipe with four or more fingers
+     /// (upward). When unset, such swipes drive the workspace carousel.
+     pub swipe_4_up: Option<Action>,
++    /// Discrete actions for held swipes: fingers resting still for a moment
++    /// before moving past the swipe threshold. A direction left unset falls
++    /// back to the animated swipe for that direction.
++    pub hold: TouchscreenSwipeHold,
+ }
+ 
+ impl Default for TouchscreenSwipe {
+@@ -176,6 +180,7 @@ impl Default for TouchscreenSwipe {
+             tap_4: None,
+             swipe_4_down: None,
+             swipe_4_up: None,
++            hold: TouchscreenSwipeHold::default(),
+         }
+     }
+ }
+@@ -194,6 +199,8 @@ pub struct TouchscreenSwipePart {
+     pub swipe_4_down: Option<TouchscreenTap>,
+     #[knuffel(child)]
+     pub swipe_4_up: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub hold: Option<TouchscreenSwipeHoldPart>,
+ }
+ 
+ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+@@ -214,6 +221,68 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+         if let Some(a) = &part.swipe_4_up {
+             self.swipe_4_up = Some(a.action.clone());
+         }
++        if let Some(hold) = &part.hold {
++            self.hold.merge_with(hold);
++        }
++    }
++}
++
++/// Discrete actions for "hold then swipe" touchscreen gestures: the fingers
++/// rest still for a moment (about 400ms) before moving past the swipe
++/// threshold, then the dominant swipe direction picks the action. Quick
++/// swipes are unaffected — they keep driving the animated view scroll /
++/// workspace carousel.
++///
++/// ```kdl
++/// gestures {
++///     touchscreen-swipe {
++///         hold {
++///             left { move-column-left; }
++///             right { move-column-right; }
++///             up { move-window-to-workspace-up; }
++///             down { move-window-to-workspace-down; }
++///         }
++///     }
++/// }
++/// ```
++#[derive(Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenSwipeHold {
++    /// Action for a held swipe whose dominant movement is to the left.
++    pub left: Option<Action>,
++    /// Action for a held swipe whose dominant movement is to the right.
++    pub right: Option<Action>,
++    /// Action for a held swipe whose dominant movement is upward.
++    pub up: Option<Action>,
++    /// Action for a held swipe whose dominant movement is downward.
++    pub down: Option<Action>,
++}
++
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenSwipeHoldPart {
++    #[knuffel(child)]
++    pub left: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub right: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub up: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub down: Option<TouchscreenTap>,
++}
++
++impl MergeWith<TouchscreenSwipeHoldPart> for TouchscreenSwipeHold {
++    fn merge_with(&mut self, part: &TouchscreenSwipeHoldPart) {
++        if let Some(a) = &part.left {
++            self.left = Some(a.action.clone());
++        }
++        if let Some(a) = &part.right {
++            self.right = Some(a.action.clone());
++        }
++        if let Some(a) = &part.up {
++            self.up = Some(a.action.clone());
++        }
++        if let Some(a) = &part.down {
++            self.down = Some(a.action.clone());
++        }
+     }
+ }
+ 
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index a189a0dd..3dd4b656 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -1671,6 +1671,12 @@ mod tests {
+                     tap_4: None,
+                     swipe_4_down: None,
+                     swipe_4_up: None,
++                    hold: TouchscreenSwipeHold {
++                        left: None,
++                        right: None,
++                        up: None,
++                        down: None,
++                    },
+                 },
+                 touchscreen_edge_swipe: TouchscreenEdgeSwipe {
+                     spawn: [],
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 4310914c..c4b370c4 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4338,12 +4338,24 @@ impl State {
+                 .touch_swipe_tracker
+                 .touch_motion(slot, pos, timestamp)
+             {
++                // A HoldSwipe is a threshold crossing after the fingers
++                // lingered still for a moment. When the dominant direction
++                // has a `hold` binding it runs as a discrete action; without
++                // one it falls through to the animated gesture below.
++                let is_hold = matches!(gesture_ev, GestureEvent::HoldSwipe { .. });
+                 if let GestureEvent::Begin {
+                     direction,
+                     delta_x,
+                     delta_y,
+                     fingers,
+                     timestamp: ts,
++                }
++                | GestureEvent::HoldSwipe {
++                    direction,
++                    delta_x,
++                    delta_y,
++                    fingers,
++                    timestamp: ts,
+                 } = gesture_ev
+                 {
+                     let ts_swipe_off = self.niri.config.borrow().gestures.touchscreen_swipe.off;
+@@ -4362,10 +4374,28 @@ impl State {
+                                     .touchscreen_swipe
+                                     .clone();
+ 
+-                                // Discrete 4+-finger vertical swipes: run a configured
+-                                // action on completion instead of the animated gesture.
+-                                let discrete_action = if fingers >= 4
+-                                    && direction == SwipeDirection::Vertical
++                                // Discrete actions: a held swipe resolves to its
++                                // `hold` direction binding; a quick 4+-finger
++                                // vertical swipe to swipe-4-up/down.
++                                let discrete_action = if is_hold {
++                                    let hold = &touchscreen_swipe.hold;
++                                    match direction {
++                                        SwipeDirection::Horizontal => {
++                                            if delta_x < 0.0 {
++                                                hold.left.clone()
++                                            } else {
++                                                hold.right.clone()
++                                            }
++                                        }
++                                        SwipeDirection::Vertical => {
++                                            if delta_y < 0.0 {
++                                                hold.up.clone()
++                                            } else {
++                                                hold.down.clone()
++                                            }
++                                        }
++                                    }
++                                } else if fingers >= 4 && direction == SwipeDirection::Vertical
+                                 {
+                                     if delta_y > 0.0 {
+                                         touchscreen_swipe.swipe_4_down.clone()
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index 3e8704a6..a099033c 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -85,12 +85,21 @@ impl TouchSwipeGrab {
+         };
+ 
+         match event {
++            // A HoldSwipe here means the hold had no action bound, so it fell
++            // through to the animated gesture path — same handling as Begin.
+             GestureEvent::Begin {
+                 direction,
+                 delta_x,
+                 delta_y,
+                 timestamp,
+                 ..
++            }
++            | GestureEvent::HoldSwipe {
++                direction,
++                delta_x,
++                delta_y,
++                timestamp,
++                ..
+             } => {
+                 match direction {
+                     SwipeDirection::Horizontal => {
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index d540ae59..ff5c63c0 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -3,7 +3,8 @@
+ //! Tracks active touch slots and recognizes when 3+ fingers are swiping together in the same
+ //! direction, producing synthetic gesture begin / update / end signals. Also recognizes taps:
+ //! all fingers going down and up within a short window without enough movement to become a
+-//! swipe.
++//! swipe. And it distinguishes quick swipes from "hold then swipe" gestures by how long the
++//! fingers linger below the movement threshold before crossing it.
+ 
+ use std::collections::HashMap;
+ use std::time::Duration;
+@@ -19,6 +20,11 @@ const GESTURE_THRESHOLD_PX: f64 = 16.0;
+ /// count as a tap rather than a cancelled gesture.
+ const TAP_MAX_DURATION: Duration = Duration::from_millis(250);
+ 
++/// Minimum time from reaching the minimum finger count to crossing the movement threshold
++/// for the swipe to classify as a hold-swipe rather than a quick swipe. Same ballpark as
++/// libinput's long-press timeout; quick deliberate swipes cross the threshold far faster.
++const HOLD_THRESHOLD: Duration = Duration::from_millis(400);
++
+ /// Default minimum number of simultaneous touch points required to start a gesture.
+ #[cfg(test)]
+ const DEFAULT_MIN_FINGERS: usize = 3;
+@@ -56,6 +62,18 @@ pub enum GestureEvent {
+         fingers: usize,
+         timestamp: Duration,
+     },
++    /// The movement threshold was crossed slowly: the fingers rested below it
++    /// for at least `HOLD_THRESHOLD` before moving. Like `Begin`, but the
++    /// handler resolves it to a discrete action instead of an animated gesture
++    /// when one is bound for the dominant direction.
++    HoldSwipe {
++        direction: SwipeDirection,
++        delta_x: f64,
++        delta_y: f64,
++        /// Number of fingers tracked when the gesture recognized.
++        fingers: usize,
++        timestamp: Duration,
++    },
+     Cancel,
+ }
+ 
+@@ -86,6 +104,9 @@ pub struct TouchSwipeGestureTracker {
+     min_fingers: usize,
+     /// When the current touch sequence started (first finger down); used for tap detection.
+     first_down: Option<Duration>,
++    /// When the minimum finger count was reached (start of the Recognizing phase); used to
++    /// classify threshold crossings as quick swipes or hold-swipes.
++    recognize_started: Option<Duration>,
+     /// Maximum simultaneous fingers seen during the current touch sequence.
+     max_slots: usize,
+ }
+@@ -101,6 +122,7 @@ impl TouchSwipeGestureTracker {
+             direction: SwipeDirection::Horizontal,
+             min_fingers,
+             first_down: None,
++            recognize_started: None,
+             max_slots: 0,
+         }
+     }
+@@ -152,6 +174,7 @@ impl TouchSwipeGestureTracker {
+             self.tracked_slots = self.slots.keys().copied().collect();
+             self.start_positions = self.slots.clone();
+             self.prev_centroid = self.centroid_of_tracked();
++            self.recognize_started = Some(timestamp);
+         } else if self.phase == Phase::Recognizing {
+             // An additional finger landing before the movement threshold is
+             // crossed joins the gesture (it counts toward the reported finger
+@@ -253,6 +276,7 @@ impl TouchSwipeGestureTracker {
+         self.phase = Phase::Idle;
+         self.direction = SwipeDirection::Horizontal;
+         self.first_down = None;
++        self.recognize_started = None;
+         self.max_slots = 0;
+         // min_fingers is intentionally preserved across resets.
+     }
+@@ -312,6 +336,26 @@ impl TouchSwipeGestureTracker {
+         self.phase = Phase::Active;
+         self.prev_centroid = centroid;
+ 
++        // Did the fingers linger below the threshold before crossing it?
++        let held = self
++            .recognize_started
++            .and_then(|t0| timestamp.checked_sub(t0))
++            .is_some_and(|elapsed| elapsed >= HOLD_THRESHOLD);
++
++        if held {
++            debug!(
++                "touch_swipe: hold-swipe recognized as {:?}, delta ({dx:.1}, {dy:.1})",
++                self.direction
++            );
++            return Some(GestureEvent::HoldSwipe {
++                direction: self.direction,
++                delta_x: dx,
++                delta_y: dy,
++                fingers: self.tracked_slots.len(),
++                timestamp,
++            });
++        }
++
+         trace!(
+             "touch_swipe: gesture recognized as {:?}, delta ({dx:.1}, {dy:.1})",
+             self.direction
+@@ -409,6 +453,113 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn hold_swipe_detected_after_slow_threshold_crossing() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++
++        // Fingers rest still for a while, then move left past the threshold.
++        tracker.touch_motion(slot(0), pt(95.0, 100.0), ts(100));
++        tracker.touch_motion(slot(1), pt(105.0, 100.0), ts(100));
++        assert!(tracker
++            .touch_motion(slot(2), pt(115.0, 100.0), ts(100))
++            .is_none());
++
++        tracker.touch_motion(slot(0), pt(80.0, 100.0), ts(500));
++        tracker.touch_motion(slot(1), pt(90.0, 100.0), ts(500));
++        let ev = tracker.touch_motion(slot(2), pt(100.0, 100.0), ts(500));
++
++        match ev {
++            Some(GestureEvent::HoldSwipe {
++                direction,
++                delta_x,
++                delta_y,
++                fingers,
++                ..
++            }) => {
++                assert_eq!(direction, SwipeDirection::Horizontal);
++                // Centroid moved from 110 to 90: 20px to the left.
++                assert_eq!(delta_x, -20.0);
++                assert_eq!(delta_y, 0.0);
++                assert_eq!(fingers, 3);
++            }
++            other => panic!("expected HoldSwipe, got {other:?}"),
++        }
++        assert!(tracker.is_active());
++    }
++
++    #[test]
++    fn hold_swipe_vertical_carries_sign() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++
++        // Held, then dragged down past the threshold.
++        tracker.touch_motion(slot(0), pt(100.0, 120.0), ts(450));
++        tracker.touch_motion(slot(1), pt(110.0, 120.0), ts(450));
++        let ev = tracker.touch_motion(slot(2), pt(120.0, 120.0), ts(450));
++
++        match ev {
++            Some(GestureEvent::HoldSwipe {
++                direction,
++                delta_y,
++                ..
++            }) => {
++                assert_eq!(direction, SwipeDirection::Vertical);
++                // Positive delta = downward on screen.
++                assert_eq!(delta_y, 20.0);
++            }
++            other => panic!("expected HoldSwipe, got {other:?}"),
++        }
++    }
++
++    #[test]
++    fn threshold_crossed_before_hold_threshold_is_quick_swipe() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++
++        // 399ms: still a quick swipe, not a hold-swipe.
++        tracker.touch_motion(slot(0), pt(80.0, 100.0), ts(399));
++        tracker.touch_motion(slot(1), pt(90.0, 100.0), ts(399));
++        let ev = tracker.touch_motion(slot(2), pt(100.0, 100.0), ts(399));
++
++        assert!(matches!(ev, Some(GestureEvent::Begin { .. })));
++    }
++
++    #[test]
++    fn hold_clock_starts_at_the_last_finger_landing() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        // Third finger lands late: the hold clock must start here, not at 0.
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(300));
++
++        // Crossing at 500ms is only 200ms after the gesture became possible.
++        tracker.touch_motion(slot(0), pt(80.0, 100.0), ts(500));
++        tracker.touch_motion(slot(1), pt(90.0, 100.0), ts(500));
++        let ev = tracker.touch_motion(slot(2), pt(100.0, 100.0), ts(500));
++
++        assert!(matches!(ev, Some(GestureEvent::Begin { .. })));
++    }
++
++    #[test]
++    fn hold_without_movement_lifts_to_cancel_not_tap() {
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
++        tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
++        tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
++
++        // Lift after a long still hold: too slow for a tap, never moved.
++        assert!(tracker.touch_up(slot(0), ts(500)).is_none());
++        assert!(tracker.touch_up(slot(1), ts(510)).is_none());
++        assert!(matches!(tracker.touch_up(slot(2), ts(520)), Some(GestureEvent::Cancel)));
++    }
++
+     #[test]
+     fn updates_emit_centroid_delta() {
+         let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
+-- 
+2.55.0
+
