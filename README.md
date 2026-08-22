@@ -5,7 +5,7 @@ touchscreen gestures, an on-screen keyboard that adapts to screen orientation,
 and automatic display rotation — everything needed to run a niri session with
 the keyboard detached.
 
-[![demo](https://raw.githubusercontent.com/GGEZUS/niri-tablet/refs/heads/main/demo/demo_thumbnail.png)](https://raw.githubusercontent.com/GGEZUS/niri-tablet/refs/heads/main/demo/demo.webp)
+![demo](https://raw.githubusercontent.com/GGEZUS/niri-tablet/main/demo/demo.webp)
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
