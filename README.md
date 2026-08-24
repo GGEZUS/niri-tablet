@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2010%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2011%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 [![Stars](https://img.shields.io/github/stars/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/stargazers)
 
@@ -75,7 +75,7 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 10 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 11 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
   flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
@@ -207,7 +207,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 10 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 11 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.
