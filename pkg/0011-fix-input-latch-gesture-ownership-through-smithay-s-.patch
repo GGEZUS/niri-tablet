@@ -1,0 +1,146 @@
+From db7b5ed7431a78284ece4aba879849dcdd62d025 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Mon, 24 Aug 2026 21:13:44 +0100
+Subject: [PATCH 11/11] fix(input): latch gesture ownership through smithay's
+ implicit touch grab
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Smithay's default grab installs an implicit TouchDownGrab on every
+delivered touch-down — the touch stays focused on the grabbed surface
+until all points release. So handle.is_grabbed() is true from the first
+finger that lands on an app window, which is the common case for a
+gesture start. The ownership latch from the previous commit required
+!is_grabbed(), so over app surfaces it never fired:
+
+- every finger of the gesture was delivered to the client (and kept
+  streaming to the surface the first finger grabbed), and
+- once the gesture grab installed, it swallowed the lifts of those
+  already-delivered touches — they never ended client-side.
+
+Clients were left with stuck touch points: browsers pinch-zoomed from a
+single finger and ignored taps after multi-finger gestures, until
+restarted. Touch ids were also reused while stuck, producing
+double-downs on the wire (verified with WAYLAND_DEBUG: unmatched downs,
+up to 9 phantom touches open at once).
+
+The fix, in three parts:
+
+- The latch treats an implicit TouchDownGrab as "no grab" (real grabs —
+  edge swipe, move, overview, DnD — still suppress it) and drops it when
+  it takes over; the synthetic lifts + frame then end the touches the
+  client saw, exactly as intended.
+
+- on_touch_cancel no longer relies on TouchHandle::cancel() to clear
+  client-visible touches (it skips frame-flushed slots, i.e. all of
+  them); it ends them with synthetic lifts before resetting, so a
+  hardware cancel can't leave stuck touches either.
+
+- The edge-swipe synthetic lift is followed by a frame: the swallow grab
+  eats every later one, so the client would never see the lift
+  finalized.
+---
+ src/input/mod.rs | 52 +++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 49 insertions(+), 3 deletions(-)
+
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index a5822a0a..3055fb24 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -29,7 +29,8 @@ use smithay::input::pointer::{
+     GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, RelativeMotionEvent,
+ };
+ use smithay::input::touch::{
+-    DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, UpEvent,
++    DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent, TouchDownGrab,
++    UpEvent,
+ };
+ use smithay::input::SeatHandler;
+ use smithay::output::Output;
+@@ -4098,13 +4099,31 @@ impl State {
+         // drag-selecting under a hold-swipe.
+         let gestures_enabled =
+             !self.niri.config.borrow().gestures.touchscreen_swipe.off;
++        // Smithay installs an implicit TouchDownGrab on every delivered
++        // touch-down (it keeps the touch focused on the grabbed surface until
++        // all points release), so `is_grabbed()` is true whenever the first
++        // fingers of a gesture landed on an app window — the common case.
++        // That implicit grab does not own the stream the way our grabs do:
++        // treat it as "no grab" here. Without this, the ownership latch
++        // could never fire over app surfaces: every finger of the gesture
++        // streamed to the client, and their lifts then died inside the
++        // gesture grab — stuck touches in apps (browsers pinch-zoomed from a
++        // single finger after any 3-finger swipe).
++        let no_real_grab = !handle.is_grabbed()
++            || handle
++                .with_grab(|_, grab| grab.as_any().is::<TouchDownGrab<State>>())
++                .unwrap_or(false);
+         if gestures_enabled
+             && !self.niri.touch_input_suspended
+-            && !handle.is_grabbed()
++            && no_real_grab
+             && (self.niri.touch_swipe_tracker.is_recognizing()
+                 || self.niri.touch_swipe_tracker.is_active())
+         {
+             debug!("touch: multi-finger gesture owns the touch stream");
++            // Drop the implicit grab if any: the synthetic lifts below end
++            // the touches the client already saw, and suspension takes over
++            // delivery from here.
++            handle.unset_grab(self);
+             self.niri.touch_input_suspended = true;
+             // End the touches the client already sees (the first fingers
+             // that landed) with synthetic lift events — a clean, universal
+@@ -4548,7 +4567,9 @@ impl State {
+                 // don't receive a stray drag. End the touch the client has
+                 // already seen with a synthetic lift first — the grab will
+                 // swallow the real one (TouchHandle::cancel is unreliable,
+-                // see the gesture-ownership handling in on_touch_down).
++                // see the gesture-ownership handling in on_touch_down). The
++                // lift needs its frame now too: the grab swallows every
++                // later one, so the client would never process it.
+                 let up_serial = SERIAL_COUNTER.next_serial();
+                 handle.up(
+                     self,
+@@ -4558,6 +4579,7 @@ impl State {
+                         time: evt.time_msec(),
+                     },
+                 );
++                handle.frame(self);
+ 
+                 let start_data = TouchGrabStartData {
+                     focus: None,
+@@ -4628,6 +4650,30 @@ impl State {
+         let Some(handle) = self.niri.seat.get_touch() else {
+             return;
+         };
++
++        // TouchHandle::cancel() cannot be used to end the touches the client
++        // already sees: smithay skips slots whose events were frame-flushed
++        // (all of them, after any frame), so it would send nothing and the
++        // touches would stay stuck in the client — and after a hardware
++        // cancel no lifts will ever come for them. End them with synthetic
++        // lifts instead. (While one of our grabs is active nothing is
++        // client-visible; the handle.cancel() below releases the grab.)
++        if !handle.is_grabbed() {
++            let time = get_monotonic_time().as_millis() as u32;
++            for slot in self.niri.touch_swipe_tracker.slots().collect::<Vec<_>>() {
++                let serial = SERIAL_COUNTER.next_serial();
++                handle.up(
++                    self,
++                    &UpEvent {
++                        slot,
++                        serial,
++                        time,
++                    },
++                );
++            }
++            handle.frame(self);
++        }
++
+         // Reset the pre-grab tracker so stale state doesn't carry over.
+         self.niri.touch_swipe_tracker.reset();
+         self.niri.touch_input_suspended = false;
+-- 
+2.55.0
+

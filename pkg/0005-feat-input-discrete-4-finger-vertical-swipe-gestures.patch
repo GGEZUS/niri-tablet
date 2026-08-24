@@ -1,7 +1,7 @@
 From 3ce8f7bb730c1d5cb1f2684fc21acbdb4a599009 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Thu, 20 Aug 2026 20:32:20 +0100
-Subject: [PATCH 05/10] feat(input): discrete 4-finger vertical swipe gestures
+Subject: [PATCH 05/11] feat(input): discrete 4-finger vertical swipe gestures
 
 A vertical swipe recognized with four or more fingers now runs a
 configurable action instead of driving the workspace carousel:

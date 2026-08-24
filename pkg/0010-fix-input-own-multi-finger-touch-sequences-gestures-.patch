@@ -1,7 +1,7 @@
 From 387c13de68d228780046654e884a6771f2041fc2 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Sat, 22 Aug 2026 22:04:35 +0100
-Subject: [PATCH 10/10] =?UTF-8?q?fix(input):=20own=20multi-finger=20touch?=
+Subject: [PATCH 10/11] =?UTF-8?q?fix(input):=20own=20multi-finger=20touch?=
  =?UTF-8?q?=20sequences=20=E2=80=94=20gestures=20stop=20leaking=20to=20app?=
  =?UTF-8?q?s?=
 MIME-Version: 1.0

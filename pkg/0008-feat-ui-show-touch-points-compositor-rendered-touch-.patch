@@ -1,7 +1,7 @@
 From ed74b55aed6ffeff96a9ace23c22330adc722960 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Sat, 22 Aug 2026 14:30:21 +0100
-Subject: [PATCH 08/10] =?UTF-8?q?feat(ui):=20show-touch-points=20=E2=80=94?=
+Subject: [PATCH 08/11] =?UTF-8?q?feat(ui):=20show-touch-points=20=E2=80=94?=
  =?UTF-8?q?=20compositor-rendered=20touch=20point=20visualization?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
