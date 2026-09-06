@@ -1,0 +1,101 @@
+From 2e96de3093ee6d33b8fa3118cc8d986ca70829c0 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Sun, 6 Sep 2026 18:53:35 +0100
+Subject: [PATCH 12/12] fix(input): clear touch gesture state when a touch
+ device is removed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A touch device can vanish mid-gesture — in practice, a USB touchscreen
+crash-looping and re-enumerating every few seconds. No lift or cancel
+events ever arrive for its slots, and on_device_removed did not touch
+the gesture state, so three wedges persisted for the rest of the
+session:
+
+- touch_input_suspended never cleared (it only clears on the last
+  finger's up or when the gesture advances to its grab), so every
+  touch of the re-enumerated device was swallowed — touch stayed dead
+  even while the new device was alive;
+- any installed TouchSwipeGrab/EdgeSwipeGrab stayed on the touch
+  handle, eating all future touches;
+- touches already delivered to a client never got their lift — stuck
+  phantom touches, apps ignored taps and clicks until restarted (the
+  same bug class the gesture-ownership latch fixed).
+
+Now, on removal of a touch-capable device, perform the same teardown
+on_touch_cancel performs: end client-visible touches with synthetic
+lifts + frame (cancel() is a no-op for frame-flushed slots), release
+grabs via handle.cancel(), reset both trackers, clear the suspension,
+and drop the touch-point overlay — before the seat touch removal
+destroys the handle.
+
+Observed on a T480 whose Raydium touchscreen entered a ~5.5s
+disconnect loop mid-session: touch died for the whole session and
+apps stopped responding to touchpad clicks until restarted.
+---
+ src/input/mod.rs | 48 ++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 3055fb24..f26ba92f 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -273,8 +273,52 @@ impl State {
+                 tablet_seat.clear_tools();
+             }
+         }
+-        if device.has_capability(DeviceCapability::Touch) && self.niri.touch.is_empty() {
+-            self.niri.seat.remove_touch();
++        if device.has_capability(DeviceCapability::Touch) {
++            // The device can vanish mid-gesture (e.g. a USB touchscreen
++            // crash-looping and re-enumerating). No lifts or cancels will
++            // ever arrive for its slots, so without this the gesture state
++            // wedges for the rest of the session: touch_input_suspended
++            // never clears (every touch of the re-enumerated device is
++            // swallowed), a gesture grab stays installed on the touch
++            // handle, and touches already delivered to clients stay stuck
++            // (apps then ignore taps and clicks until restarted). End what
++            // the client sees with synthetic lifts, drop any grabs, and
++            // reset the trackers. Must run before the seat touch removal
++            // below, which destroys the handle.
++            if let Some(handle) = self.niri.seat.get_touch() {
++                // While one of our grabs is active nothing is client-visible;
++                // handle.cancel() below releases the grab instead (same
++                // reasoning as on_touch_cancel).
++                if !handle.is_grabbed() {
++                    let time = get_monotonic_time().as_millis() as u32;
++                    for slot in self.niri.touch_swipe_tracker.slots().collect::<Vec<_>>() {
++                        let serial = SERIAL_COUNTER.next_serial();
++                        handle.up(
++                            self,
++                            &UpEvent {
++                                slot,
++                                serial,
++                                time,
++                            },
++                        );
++                    }
++                    handle.frame(self);
++                }
++                handle.cancel(self);
++            }
++            self.niri.touch_swipe_tracker.reset();
++            self.niri.touch_edge_swipe_tracker.reset();
++            self.niri.touch_input_suspended = false;
++            if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
++                && !self.niri.touch_points.is_empty()
++            {
++                self.niri.touch_points.cancel();
++                self.niri.queue_redraw_all();
++            }
++
++            if self.niri.touch.is_empty() {
++                self.niri.seat.remove_touch();
++            }
+         }
+     }
+ 
+-- 
+2.55.0
+
