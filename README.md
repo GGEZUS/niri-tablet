@@ -226,8 +226,8 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Tested hardware
 
-- **Microsoft Surface Go 2** — built and daily-driven here.
-- **ThinkPad T480** — verified from a fresh install (the portability test).
+- Microsoft Surface Go 2
+- ThinkPad T480
 
 ## Status & credits
 
