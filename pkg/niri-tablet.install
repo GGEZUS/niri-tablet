@@ -1,14 +1,26 @@
 # niri-tablet install scriptlet — the one thing users must not miss:
 # without IgnorePkg, the next -Syu swaps back to stock niri, silently.
+# The pin check is live, so already-pinned upgrades stay quiet.
+
+ignorepkg_niri_is_set() {
+    grep -E '^[[:space:]]*IgnorePkg([[:space:]]|=)' /etc/pacman.conf 2>/dev/null | grep -qw niri
+}
 
 post_install() {
     cat <<'EOF'
 
 ==> niri-tablet replaces stock niri.
+
+EOF
+    if ! ignorepkg_niri_is_set; then
+        cat <<'EOF'
 ==> Until this line is in /etc/pacman.conf, the next `pacman -Syu`
 ==> will swap back to stock niri and the gestures will vanish:
 ==>     IgnorePkg = niri
-==> Then log out/in (or reboot) to start the patched compositor.
+EOF
+    fi
+    cat <<'EOF'
+==> Log out/in (or reboot) to start the patched compositor.
 
 EOF
 }
@@ -17,8 +29,12 @@ post_upgrade() {
     cat <<'EOF'
 
 ==> niri-tablet updated. Log out/in (or reboot) to start the new build.
+EOF
+    if ! ignorepkg_niri_is_set; then
+        cat <<'EOF'
 ==> Still needs `IgnorePkg = niri` in /etc/pacman.conf, or the next
 ==> `pacman -Syu` swaps back to stock niri.
-
 EOF
+    fi
+    echo
 }
