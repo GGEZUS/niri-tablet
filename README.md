@@ -99,8 +99,19 @@ when that lands, this patchset can be retired.
 
 ## Install (Arch Linux)
 
+Easiest — the bundled updater handles first installs too:
+
 ```bash
 git clone https://github.com/GGEZUS/niri-tablet.git
+cd niri-tablet
+./update-niri-tablet.sh
+```
+
+It fetches the latest release, builds it (the `sudo` prompt for the
+install comes from `makepkg`), and pins `IgnorePkg = niri` in
+`/etc/pacman.conf` if that pin is missing. Manual equivalent:
+
+```bash
 cd niri-tablet/pkg
 makepkg -si        # builds upstream niri + patches; replaces stock niri
 ```
@@ -146,8 +157,18 @@ the AUR package.
 
 ## Updating
 
-The patchset is rebased onto the niri release named by `_tag` in the PKGBUILD;
-when this repo follows a new one:
+One command, from anywhere inside the clone:
+
+```bash
+./update-niri-tablet.sh
+```
+
+It fetches the latest release tag, shows the changelog since your installed
+version, builds and installs the package, and re-checks the
+`IgnorePkg = niri` pin. Useful flags: `--check` reports without touching
+anything, `--force` rebuilds an up-to-date install, `--tag vX.Y.Z` picks a
+specific release, `--main` tracks the development branch. The manual
+equivalent:
 
 ```bash
 git pull
@@ -155,11 +176,11 @@ cd pkg
 makepkg -si        # incremental: the shared target dir is reused
 ```
 
-`update.sh` and `install.sh` at the repo root are maintainer scripts (they
-rebase and regenerate the patch series against a dev clone of niri); plain
-`makepkg` is all a user install ever needs. After a big Rust toolchain jump,
-deleting `~/.cache/niri-tablet-target` is harmless — the next build is just a
-slow cold one again.
+`update-niri-tablet.sh` at the repo root is the user-facing updater;
+`update.sh` and `install.sh` are maintainer scripts (they rebase and
+regenerate the patch series against a dev clone of niri). After a big Rust
+toolchain jump, deleting `~/.cache/niri-tablet-target` is harmless — the
+next build is just a slow cold one again.
 
 ## On-screen keyboard + auto-rotation (optional, works on stock niri too)
 
@@ -195,6 +216,7 @@ Edit `OUTPUT`/heights at the top of the scripts for your device.
 
 ```
 pkg/       Arch PKGBUILD + the patch series against upstream niri
+update-niri-tablet.sh   user-facing updater (install/update/pin)
 scripts/   OSK toggle + auto-rotate helpers
 config/    example niri config fragments
 extras/    optional extras (wvkbd build with mobile layouts)
