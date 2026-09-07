@@ -59,3 +59,9 @@ prefix. No behavior change.
   smoking gun, the 4th finger arriving after recognition.
 - `swipe dispatch: fingers=N ... discrete=...`: which action the dispatch
   picked and why.
+
+`t480-known-good.log` is the maintainer's baseline capture on hardware
+where 4-finger gestures work: first three fingers in one frame, 4th
+joins 9-18ms later, recognition 27-100ms after that, every 4-finger
+flick dispatched with `fingers=4`. Compare the reporter's capture
+against that ordering.
