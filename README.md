@@ -265,4 +265,5 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 License: **GPL-3.0-only** (the patches modify niri, also GPL-3.0-only).
 Swipe foundation by Mario St Jr; taps, flicks, fixes, scripts and packaging
-by [GGEZUS](https://github.com/GGEZUS).
+by [GGEZUS](https://github.com/GGEZUS); NixOS instructions by
+[lamarios](https://github.com/lamarios) (PR #1).
