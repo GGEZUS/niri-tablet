@@ -142,7 +142,7 @@ let
   niri-tablet-repo = pkgs.fetchFromGitHub {
     owner = "GGEZUS";
     repo = "niri-tablet";
-    rev = "main"; 
+    rev = "v26.04.12"; 
     hash = ""; # Leave empty on first run; Nix will fail and provide the correct hash
   };
 
@@ -152,7 +152,7 @@ let
         # Shell globbing automatically applies 0001, 0002, etc. in numerical order
         for patch_file in ${niri-tablet-repo}/pkg/*.patch; do
           echo "Applying $patch_file"
-          patch -p1 < "$patch_file"
+          patch -Np1 < "$patch_file"
         done
       '';
     });
