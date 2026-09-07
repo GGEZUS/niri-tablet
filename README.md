@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2012%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2015%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 [![Stars](https://img.shields.io/github/stars/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/stargazers)
 
@@ -24,12 +24,15 @@ the keyboard detached.
 | 4-finger tap | window overview (built-in; any launcher binds in its place) |
 | 4-finger flick down | close the focused window |
 | 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) |
+| 1-finger swipe inward from a screen edge | configurable per edge (e.g. launcher from the bottom) |
+| 1-finger diagonal swipe from a corner | configurable per corner |
 
 All actions are configurable — every node in the `gestures` block takes any
 niri action, same as keybinds. The example `config/gestures.kdl` binds 4-tap
 to the built-in `toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are
-one uncomment away. A single-finger bottom-edge swipe is also
-implemented but unbound by default. Touchpad behavior is untouched.
+one uncomment away. Single-finger edge and corner swipes (eight zones:
+four edges, four corners, each with its own action) are implemented and
+unbound by default. Touchpad behavior is untouched.
 
 ### Hold-swipe: move windows
 
@@ -74,7 +77,7 @@ ordinary taps and scrolling stay clean.
 `debug-log` turns on per-event logging of the touchscreen gesture stack:
 every finger down/up/motion with slot ids, positions and timestamps, the
 recognition decision (finger count, direction, hold vs quick), and the
-action dispatched for taps, discrete swipes and edge swipes. Every line is
+action dispatched for taps, discrete swipes and edge/corner swipes. Every line is
 prefixed `gesture-debug:`.
 
 ```kdl
@@ -100,11 +103,12 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 13 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 15 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
   flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
-  client-side so apps don't react to them), the optional edge swipe, touch
+  client-side so apps don't react to them), single-finger edge and corner
+  swipes (8 zones, any action), touch
   point visualization, clean recovery when a touch device disappears
   mid-gesture (hotplug/unplug no longer wedges the session), and opt-in
   gesture event logging for bug reports. The animated
@@ -283,7 +287,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 13 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 15 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.

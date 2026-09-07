@@ -1,0 +1,1041 @@
+From a38d4054233d7092c0f39b3ba1435eefd11ca86d Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Mon, 7 Sep 2026 23:17:11 +0100
+Subject: [PATCH 14/15] feat(input): single-finger edge and corner swipe
+ gestures
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replace the bottom-edge-only swipe with eight zones: a finger starting
+within 48px of any output edge swiping inward past 40px fires that
+zone's action, and a finger starting in a corner square swiping
+diagonally inward past 20px on both axes fires the corner's action.
+Mostly-straight swipes near a corner deliberately fire nothing, so the
+adjacent edges stay usable up to the corner.
+
+- `touchscreen-edge-swipe { bottom/top/left/right { ...; } }` and the
+  new `touchscreen-corner-swipe { top-left/top-right/bottom-left/
+  bottom-right { ...; } }` each bind any niri action per zone; zones
+  left unbound are inert and touches there deliver normally. This
+  replaces the old `touchscreen-edge-swipe { spawn ... }` argv node —
+  a breaking config change (the spawn form never really worked).
+- Corners win over edges when the start is within 48px of two adjacent
+  edges; zones are classified per output from the touch position, so
+  multi-output and output transforms are handled for free.
+- The dispatch sequence (action, synthetic lift, swallow grab) and the
+  single-finger discipline are unchanged from the bottom-edge swipe.
+---
+ niri-config/src/gestures.rs   | 131 ++++++++++-
+ niri-config/src/lib.rs        |  71 +++++-
+ src/input/mod.rs              | 204 ++++++++++-------
+ src/input/touch_edge_swipe.rs | 400 ++++++++++++++++++++++++++++------
+ 4 files changed, 659 insertions(+), 147 deletions(-)
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 1fc31725..14e01b59 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -10,6 +10,7 @@ pub struct Gestures {
+     pub hot_corners: HotCorners,
+     pub touchscreen_swipe: TouchscreenSwipe,
+     pub touchscreen_edge_swipe: TouchscreenEdgeSwipe,
++    pub touchscreen_corner_swipe: TouchscreenCornerSwipe,
+     /// Visualize touch points on screen (translucent dots that follow the
+     /// fingers). Meant for demo videos and debugging gestures; off by default.
+     pub show_touch_points: ShowTouchPoints,
+@@ -31,7 +32,9 @@ pub struct GesturesPart {
+     #[knuffel(child)]
+     pub touchscreen_swipe: Option<TouchscreenSwipePart>,
+     #[knuffel(child)]
+-    pub touchscreen_edge_swipe: Option<TouchscreenEdgeSwipe>,
++    pub touchscreen_edge_swipe: Option<TouchscreenEdgeSwipePart>,
++    #[knuffel(child)]
++    pub touchscreen_corner_swipe: Option<TouchscreenCornerSwipePart>,
+     #[knuffel(child, unwrap(argument))]
+     pub show_touch_points: Option<ShowTouchPoints>,
+     #[knuffel(child)]
+@@ -45,9 +48,10 @@ impl MergeWith<GesturesPart> for Gestures {
+             dnd_edge_view_scroll,
+             dnd_edge_workspace_switch,
+             touchscreen_swipe,
++            touchscreen_edge_swipe,
++            touchscreen_corner_swipe,
+         );
+         merge_clone!((self, part), hot_corners);
+-        merge_clone!((self, part), touchscreen_edge_swipe);
+         if let Some(show_touch_points) = part.show_touch_points {
+             self.show_touch_points = show_touch_points;
+         }
+@@ -329,19 +333,128 @@ where
+     }
+ }
+ 
+-/// One-finger swipe up from the bottom screen edge. Disabled while `spawn` is
+-/// empty. Plain taps (without movement) are not intercepted, so buttons in the
+-/// bottom edge zone keep working.
++/// Actions for single-finger swipes that start within ~48 logical pixels of
++/// a screen edge and move inward past a threshold. Unbound directions are
++/// inert: touches in the edge strip keep delivering to surfaces (plain taps
++/// and drags work) until the trigger distance is crossed.
+ ///
+ /// ```kdl
+ /// gestures {
+ ///     touchscreen-edge-swipe {
+-///         spawn "noctalia" "msg" "panel-toggle" "launcher";
++///         bottom { toggle-overview; }
++///         top { spawn-sh "panel-toggle"; }
+ ///     }
+ /// }
+ /// ```
+-#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
++#[derive(Debug, Default, Clone, PartialEq)]
+ pub struct TouchscreenEdgeSwipe {
+-    #[knuffel(child, unwrap(arguments))]
+-    pub spawn: Vec<String>,
++    /// Swipe up from the bottom edge.
++    pub bottom: Option<Action>,
++    /// Swipe down from the top edge.
++    pub top: Option<Action>,
++    /// Swipe right from the left edge.
++    pub left: Option<Action>,
++    /// Swipe left from the right edge.
++    pub right: Option<Action>,
++}
++
++impl TouchscreenEdgeSwipe {
++    /// Whether any direction has an action bound.
++    pub fn any_bound(&self) -> bool {
++        self.bottom.is_some() || self.top.is_some() || self.left.is_some() || self.right.is_some()
++    }
++}
++
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenEdgeSwipePart {
++    #[knuffel(child)]
++    pub bottom: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub top: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub left: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub right: Option<TouchscreenTap>,
++}
++
++impl MergeWith<TouchscreenEdgeSwipePart> for TouchscreenEdgeSwipe {
++    fn merge_with(&mut self, part: &TouchscreenEdgeSwipePart) {
++        if let Some(a) = &part.bottom {
++            self.bottom = Some(a.action.clone());
++        }
++        if let Some(a) = &part.top {
++            self.top = Some(a.action.clone());
++        }
++        if let Some(a) = &part.left {
++            self.left = Some(a.action.clone());
++        }
++        if let Some(a) = &part.right {
++            self.right = Some(a.action.clone());
++        }
++    }
++}
++
++/// Actions for single-finger diagonal swipes that start within the corner
++/// zone where two edge zones meet (a ~48 logical pixel square) and move
++/// inward on both axes. Mostly-straight swipes that start in a corner zone
++/// deliberately trigger nothing, so the adjacent edges stay usable up to the
++/// corner.
++///
++/// ```kdl
++/// gestures {
++///     touchscreen-corner-swipe {
++///         top-left { focus-column-left; }
++///         bottom-right { focus-window-down; }
++///     }
++/// }
++/// ```
++#[derive(Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenCornerSwipe {
++    /// Diagonal swipe down and right from the top-left corner.
++    pub top_left: Option<Action>,
++    /// Diagonal swipe down and left from the top-right corner.
++    pub top_right: Option<Action>,
++    /// Diagonal swipe up and right from the bottom-left corner.
++    pub bottom_left: Option<Action>,
++    /// Diagonal swipe up and left from the bottom-right corner.
++    pub bottom_right: Option<Action>,
++}
++
++impl TouchscreenCornerSwipe {
++    /// Whether any corner has an action bound.
++    pub fn any_bound(&self) -> bool {
++        self.top_left.is_some()
++            || self.top_right.is_some()
++            || self.bottom_left.is_some()
++            || self.bottom_right.is_some()
++    }
++}
++
++#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
++pub struct TouchscreenCornerSwipePart {
++    #[knuffel(child)]
++    pub top_left: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub top_right: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub bottom_left: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub bottom_right: Option<TouchscreenTap>,
++}
++
++impl MergeWith<TouchscreenCornerSwipePart> for TouchscreenCornerSwipe {
++    fn merge_with(&mut self, part: &TouchscreenCornerSwipePart) {
++        if let Some(a) = &part.top_left {
++            self.top_left = Some(a.action.clone());
++        }
++        if let Some(a) = &part.top_right {
++            self.top_right = Some(a.action.clone());
++        }
++        if let Some(a) = &part.bottom_left {
++            self.bottom_left = Some(a.action.clone());
++        }
++        if let Some(a) = &part.bottom_right {
++            self.bottom_right = Some(a.action.clone());
++        }
++    }
+ }
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index fb895a72..0a87ebb0 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -664,6 +664,54 @@ mod tests {
+         assert!(!parsed.gestures.debug_log);
+     }
+ 
++    #[test]
++    fn gestures_edge_and_corner_swipe_actions() {
++        use crate::binds::Action;
++
++        let parsed = do_parse(
++            r#"
++            gestures {
++                touchscreen-edge-swipe {
++                    bottom { toggle-overview; }
++                    left { focus-column-left; }
++                }
++                touchscreen-corner-swipe {
++                    top-left { focus-column-right; }
++                    bottom-right { spawn "foo" "bar"; }
++                }
++            }
++            "#,
++        );
++        let gestures = &parsed.gestures;
++        assert_eq!(
++            gestures.touchscreen_edge_swipe.bottom,
++            Some(Action::ToggleOverview)
++        );
++        assert_eq!(
++            gestures.touchscreen_edge_swipe.left,
++            Some(Action::FocusColumnLeft)
++        );
++        assert_eq!(
++            gestures.touchscreen_corner_swipe.top_left,
++            Some(Action::FocusColumnRight)
++        );
++        assert_eq!(
++            gestures.touchscreen_corner_swipe.bottom_right,
++            Some(Action::Spawn(vec!["foo".to_string(), "bar".to_string()]))
++        );
++
++        // Unbound zones stay None; the other node stays entirely unbound.
++        assert_eq!(gestures.touchscreen_edge_swipe.top, None);
++        assert_eq!(gestures.touchscreen_edge_swipe.right, None);
++        assert_eq!(gestures.touchscreen_corner_swipe.top_right, None);
++        assert_eq!(gestures.touchscreen_corner_swipe.bottom_left, None);
++
++        // Both nodes are inert by default.
++        let parsed = Config::parse_mem("").unwrap();
++        assert!(!parsed.gestures.touchscreen_edge_swipe.any_bound());
++        assert!(!parsed.gestures.touchscreen_corner_swipe.any_bound());
++    }
++
+     #[track_caller]
+     fn do_parse(text: &str) -> Config {
+         Config::parse_mem(text)
+@@ -885,6 +933,12 @@ mod tests {
+                     trigger-width 10
+                     max-speed 50
+                 }
++                touchscreen-edge-swipe {
++                    bottom { toggle-overview; }
++                }
++                touchscreen-corner-swipe {
++                    bottom-right { spawn-sh "foo"; }
++                }
+                 show-touch-points "gestures"
+                 debug-log
+             }
+@@ -1696,7 +1750,22 @@ mod tests {
+                     },
+                 },
+                 touchscreen_edge_swipe: TouchscreenEdgeSwipe {
+-                    spawn: [],
++                    bottom: Some(
++                        ToggleOverview,
++                    ),
++                    top: None,
++                    left: None,
++                    right: None,
++                },
++                touchscreen_corner_swipe: TouchscreenCornerSwipe {
++                    top_left: None,
++                    top_right: None,
++                    bottom_left: None,
++                    bottom_right: Some(
++                        SpawnSh(
++                            "foo",
++                        ),
++                    ),
+                 },
+                 show_touch_points: Gestures,
+                 debug_log: true,
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index ea42dfbd..66c0ecba 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -40,7 +40,7 @@ use smithay::utils::{Logical, Point, Rectangle, Transform, SERIAL_COUNTER};
+ use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
+ use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint};
+ use smithay::wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait};
+-use touch_edge_swipe::EdgeSwipeGrab;
++use touch_edge_swipe::{EdgeSwipeGrab, SwipeZone};
+ use touch_overview_grab::TouchOverviewGrab;
+ use touch_swipe_grab::TouchSwipeGrab;
+ use touch_swipe_tracker::{GestureEvent, SwipeDirection};
+@@ -4211,33 +4211,35 @@ impl State {
+             return;
+         }
+ 
+-        // Feed the bottom-edge swipe tracker (e.g. launcher gesture).
+-        if !self
+-            .niri
+-            .config
+-            .borrow()
+-            .gestures
+-            .touchscreen_edge_swipe
+-            .spawn
+-            .is_empty()
++        // Feed the edge/corner swipe tracker (e.g. launcher gesture).
++        let edge_swipe_bound = {
++            let gestures = &self.niri.config.borrow().gestures;
++            gestures.touchscreen_edge_swipe.any_bound()
++                || gestures.touchscreen_corner_swipe.any_bound()
++        };
++        if edge_swipe_bound
+             && !self.niri.screenshot_ui.is_open()
+             && !self.niri.window_mru_ui.is_open()
+         {
+             if let Some((output, _)) = self.niri.output_under(pos) {
+-                let geom = self.niri.global_space.output_geometry(&output).unwrap();
+-                let bottom_edge_y = f64::from(geom.loc.y) + f64::from(geom.size.h);
++                let geom = self
++                    .niri
++                    .global_space
++                    .output_geometry(output)
++                    .unwrap()
++                    .to_f64();
++                let zone = self
++                    .niri
++                    .touch_edge_swipe_tracker
++                    .touch_down(slot, pos, geom);
+                 if self.niri.config.borrow().gestures.debug_log {
+                     info!(
+-                        "gesture-debug: edge-swipe candidate down slot={} pos=({:.0},{:.0}) edge_y={:.0}",
++                        "gesture-debug: edge-swipe candidate down slot={} pos=({:.0},{:.0}) zone={zone:?}",
+                         i32::from(slot),
+                         pos.x,
+                         pos.y,
+-                        bottom_edge_y
+                     );
+                 }
+-                self.niri
+-                    .touch_edge_swipe_tracker
+-                    .touch_down(slot, pos, bottom_edge_y);
+             }
+         }
+ 
+@@ -4635,66 +4637,69 @@ impl State {
+             }
+         }
+ 
+-        // Bottom-edge swipe (e.g. launcher gesture).
+-        if !self.niri.touch_input_suspended
+-            && self.niri.touch_edge_swipe_tracker.touch_motion(slot, pos)
+-        {
+-            let dominated = self.niri.screenshot_ui.is_open() || self.niri.window_mru_ui.is_open();
+-            if dominated {
+-                self.niri.touch_edge_swipe_tracker.reset();
+-            } else {
+-                let spawn_cmd = self
+-                    .niri
+-                    .config
+-                    .borrow()
+-                    .gestures
+-                    .touchscreen_edge_swipe
+-                    .spawn
+-                    .clone();
+-
+-                // do_action() cancels active touches, releasing any grabs;
+-                // run it before installing the swallow grab below.
+-                if !spawn_cmd.is_empty() {
+-                    if self.niri.config.borrow().gestures.debug_log {
+-                        info!(
+-                            "gesture-debug: edge-swipe trigger spawn={:?}",
+-                            spawn_cmd
+-                        );
+-                    }
+-                    self.do_action(Action::Spawn(spawn_cmd), false);
+-                }
++        // Edge/corner swipe (e.g. launcher gesture).
++        if !self.niri.touch_input_suspended {
++            if let Some(zone) = self.niri.touch_edge_swipe_tracker.touch_motion(slot, pos) {
++                let dominated =
++                    self.niri.screenshot_ui.is_open() || self.niri.window_mru_ui.is_open();
++                if dominated {
++                    self.niri.touch_edge_swipe_tracker.reset();
++                } else {
++                    let action = touchscreen_edge_swipe_action(&self.niri.config.borrow(), zone);
+ 
+-                // Swallow the rest of this gesture so surfaces under the finger
+-                // don't receive a stray drag. End the touch the client has
+-                // already seen with a synthetic lift first — the grab will
+-                // swallow the real one (TouchHandle::cancel is unreliable,
+-                // see the gesture-ownership handling in on_touch_down). The
+-                // lift needs its frame now too: the grab swallows every
+-                // later one, so the client would never process it.
+-                let up_serial = SERIAL_COUNTER.next_serial();
+-                handle.up(
+-                    self,
+-                    &UpEvent {
+-                        slot,
+-                        serial: up_serial,
+-                        time: evt.time_msec(),
+-                    },
+-                );
+-                handle.frame(self);
++                    if let Some(action) = action {
++                        if self.niri.config.borrow().gestures.debug_log {
++                            info!(
++                                "gesture-debug: edge-swipe trigger zone={zone:?} action={action:?}"
++                            );
++                        }
+ 
+-                let start_data = TouchGrabStartData {
+-                    focus: None,
+-                    slot,
+-                    location: pos,
+-                };
+-                let grab = EdgeSwipeGrab::new(start_data, slot);
+-                let serial = SERIAL_COUNTER.next_serial();
+-                handle.unset_grab(self);
+-                handle.set_grab(self, grab, serial);
++                        // do_action() cancels active touches, releasing any grabs;
++                        // run it before installing the swallow grab below.
++                        self.do_action(action, false);
++
++                        // Swallow the rest of this gesture so surfaces under the finger
++                        // don't receive a stray drag. End the touch the client has
++                        // already seen with a synthetic lift first — the grab will
++                        // swallow the real one (TouchHandle::cancel is unreliable,
++                        // see the gesture-ownership handling in on_touch_down). The
++                        // lift needs its frame now too: the grab swallows every
++                        // later one, so the client would never process it.
++                        let up_serial = SERIAL_COUNTER.next_serial();
++                        handle.up(
++                            self,
++                            &UpEvent {
++                                slot,
++                                serial: up_serial,
++                                time: evt.time_msec(),
++                            },
++                        );
++                        handle.frame(self);
+ 
+-                // We're using touch, hide the pointer.
+-                self.niri.pointer_visibility = PointerVisibility::Disabled;
+-                return;
++                        let start_data = TouchGrabStartData {
++                            focus: None,
++                            slot,
++                            location: pos,
++                        };
++                        let grab = EdgeSwipeGrab::new(start_data, slot);
++                        let serial = SERIAL_COUNTER.next_serial();
++                        handle.unset_grab(self);
++                        handle.set_grab(self, grab, serial);
++
++                        // We're using touch, hide the pointer.
++                        self.niri.pointer_visibility = PointerVisibility::Disabled;
++                        return;
++                    } else {
++                        // Unbound zone: no grab, no action. The tracker drops this
++                        // stroke and delivery continues below — the passive model
++                        // never consumed anything, so the surface just sees a
++                        // normal drag.
++                        if self.niri.config.borrow().gestures.debug_log {
++                            info!("gesture-debug: edge-swipe trigger zone={zone:?} unbound");
++                        }
++                        self.niri.touch_edge_swipe_tracker.reset();
++                    }
++                }
+             }
+         }
+ 
+@@ -5115,6 +5120,21 @@ fn allowed_when_locked(action: &Action) -> bool {
+     )
+ }
+ 
++/// Action bound to a fired edge/corner swipe zone, if any.
++fn touchscreen_edge_swipe_action(config: &Config, zone: SwipeZone) -> Option<Action> {
++    let gestures = &config.gestures;
++    match zone {
++        SwipeZone::Bottom => gestures.touchscreen_edge_swipe.bottom.clone(),
++        SwipeZone::Top => gestures.touchscreen_edge_swipe.top.clone(),
++        SwipeZone::Left => gestures.touchscreen_edge_swipe.left.clone(),
++        SwipeZone::Right => gestures.touchscreen_edge_swipe.right.clone(),
++        SwipeZone::TopLeft => gestures.touchscreen_corner_swipe.top_left.clone(),
++        SwipeZone::TopRight => gestures.touchscreen_corner_swipe.top_right.clone(),
++        SwipeZone::BottomLeft => gestures.touchscreen_corner_swipe.bottom_left.clone(),
++        SwipeZone::BottomRight => gestures.touchscreen_corner_swipe.bottom_right.clone(),
++    }
++}
++
+ fn allowed_during_screenshot(action: &Action) -> bool {
+     matches!(
+         action,
+@@ -5591,6 +5611,42 @@ mod tests {
+     use super::*;
+     use crate::animation::Clock;
+ 
++    #[test]
++    fn edge_swipe_zone_action_lookup() {
++        let config = niri_config::Config::parse_mem(
++            r#"
++            gestures {
++                touchscreen-edge-swipe {
++                    bottom { toggle-overview; }
++                    left { focus-column-left; }
++                }
++                touchscreen-corner-swipe {
++                    top-left { focus-column-right; }
++                }
++            }
++            "#,
++        )
++        .unwrap();
++
++        assert_eq!(
++            touchscreen_edge_swipe_action(&config, SwipeZone::Bottom),
++            Some(Action::ToggleOverview)
++        );
++        assert_eq!(
++            touchscreen_edge_swipe_action(&config, SwipeZone::Left),
++            Some(Action::FocusColumnLeft)
++        );
++        assert_eq!(
++            touchscreen_edge_swipe_action(&config, SwipeZone::TopLeft),
++            Some(Action::FocusColumnRight)
++        );
++        assert_eq!(touchscreen_edge_swipe_action(&config, SwipeZone::Top), None);
++        assert_eq!(
++            touchscreen_edge_swipe_action(&config, SwipeZone::BottomRight),
++            None
++        );
++    }
++
+     #[test]
+     fn bindings_suppress_keys() {
+         let close_keysym = Keysym::q;
+diff --git a/src/input/touch_edge_swipe.rs b/src/input/touch_edge_swipe.rs
+index 800ee3d5..394eae3b 100644
+--- a/src/input/touch_edge_swipe.rs
++++ b/src/input/touch_edge_swipe.rs
+@@ -1,8 +1,10 @@
+-//! Bottom-edge swipe gesture.
++//! Single-finger edge and corner swipe gestures.
+ //!
+-//! A single finger starting within `EDGE_ZONE_PX` of the bottom screen edge and swiping upward
+-//! past `TRIGGER_PX` fires a configured command (e.g. the app launcher). A grab swallows the
+-//! remaining touch events so surfaces under the finger don't receive a stray drag.
++//! A finger starting within `EDGE_ZONE_PX` of an output edge and swiping inward past
++//! `TRIGGER_PX` fires the action bound to that zone; a finger starting in a corner square and
++//! swiping diagonally inward past `CORNER_TRIGGER_PX` on both axes fires the corner's action.
++//! A grab swallows the remaining touch events so surfaces under the finger don't receive a
++//! stray drag.
+ 
+ use smithay::backend::input::TouchSlot;
+ use smithay::input::touch::{
+@@ -10,81 +12,156 @@ use smithay::input::touch::{
+     TouchGrab, TouchInnerHandle, UpEvent,
+ };
+ use smithay::input::SeatHandler;
+-use smithay::utils::{Logical, Point, Serial};
++use smithay::utils::{Logical, Point, Rectangle, Serial};
+ 
+ use crate::niri::State;
+ 
+-/// How close to the bottom edge (logical pixels) a touch must start.
++/// How close to a screen edge (logical pixels) a touch must start to count as an edge swipe.
++/// Corner zones are the `EDGE_ZONE_PX`-sided squares where two adjacent edge strips overlap.
+ const EDGE_ZONE_PX: f64 = 48.0;
+ 
+-/// Upward movement (logical pixels) required to trigger the gesture.
++/// Inward movement (logical pixels) required to trigger an edge swipe.
+ const TRIGGER_PX: f64 = 40.0;
+ 
++/// Per-axis inward movement (logical pixels) required to trigger a corner swipe, on BOTH
++/// axes — a mostly-straight swipe near a corner fires nothing on purpose. Half of
++/// `TRIGGER_PX`: a 45-degree diagonal covering the same on-screen distance as a straight
++/// edge swipe.
++const CORNER_TRIGGER_PX: f64 = TRIGGER_PX / 2.0;
++
++/// The zone a single-finger swipe started in, relative to the output the touch landed on.
++/// Corners win when the start is within `EDGE_ZONE_PX` of two adjacent edges.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum SwipeZone {
++    Bottom,
++    Top,
++    Left,
++    Right,
++    TopLeft,
++    TopRight,
++    BottomLeft,
++    BottomRight,
++}
++
++impl SwipeZone {
++    /// Classify a start position against an output's global-logical geometry. Returns `None`
++    /// when the position is not in any edge zone. Corner zones take priority over edges;
++    /// within ties the order is deterministic (top row before bottom, left before right) —
++    /// only relevant for outputs smaller than `2 * EDGE_ZONE_PX`.
++    pub fn classify(pos: Point<f64, Logical>, geom: Rectangle<f64, Logical>) -> Option<Self> {
++        let near_left = pos.x - geom.loc.x <= EDGE_ZONE_PX;
++        let near_right = geom.loc.x + geom.size.w - pos.x <= EDGE_ZONE_PX;
++        let near_top = pos.y - geom.loc.y <= EDGE_ZONE_PX;
++        let near_bottom = geom.loc.y + geom.size.h - pos.y <= EDGE_ZONE_PX;
++
++        match (near_top, near_bottom, near_left, near_right) {
++            (true, _, true, _) => Some(Self::TopLeft),
++            (true, _, _, true) => Some(Self::TopRight),
++            (_, true, true, _) => Some(Self::BottomLeft),
++            (_, true, _, true) => Some(Self::BottomRight),
++            (_, true, _, _) => Some(Self::Bottom),
++            (true, _, _, _) => Some(Self::Top),
++            (_, _, true, _) => Some(Self::Left),
++            (_, _, _, true) => Some(Self::Right),
++            (false, false, false, false) => None,
++        }
++    }
++
++    /// Whether movement by `(dx, dy)` from the start position completes this zone's swipe.
++    /// Edges: `TRIGGER_PX` inward with the inward axis dominant (`|inward| >= |along|`).
++    /// Corners: `CORNER_TRIGGER_PX` inward on both axes (deliberately no dominance rule
++    /// and no edge fallback).
++    fn triggered(self, dx: f64, dy: f64) -> bool {
++        match self {
++            Self::Bottom => dy <= -TRIGGER_PX && dy.abs() >= dx.abs(),
++            Self::Top => dy >= TRIGGER_PX && dy.abs() >= dx.abs(),
++            Self::Left => dx >= TRIGGER_PX && dx.abs() >= dy.abs(),
++            Self::Right => dx <= -TRIGGER_PX && dx.abs() >= dy.abs(),
++            Self::TopLeft => dx >= CORNER_TRIGGER_PX && dy >= CORNER_TRIGGER_PX,
++            Self::TopRight => dx <= -CORNER_TRIGGER_PX && dy >= CORNER_TRIGGER_PX,
++            Self::BottomLeft => dx >= CORNER_TRIGGER_PX && dy <= -CORNER_TRIGGER_PX,
++            Self::BottomRight => dx <= -CORNER_TRIGGER_PX && dy <= -CORNER_TRIGGER_PX,
++        }
++    }
++}
++
+ #[derive(Debug, Default)]
+ pub struct EdgeSwipeTracker {
+-    /// The tracked finger, if a single-finger edge gesture is in progress.
+-    slot: Option<TouchSlot>,
+-    /// Where the tracked finger started.
++    /// The tracked finger and its classified zone, if a single-finger edge gesture is in
++    /// progress.
++    tracked: Option<Tracked>,
++}
++
++#[derive(Debug)]
++struct Tracked {
++    slot: TouchSlot,
++    /// Where the finger started.
+     start: Point<f64, Logical>,
+-    /// Logical Y coordinate of the bottom edge of the output where tracking started.
+-    bottom_edge_y: f64,
++    /// Zone classified at touch-down from the start position and output geometry; fixed for
++    /// the stroke.
++    zone: SwipeZone,
+     /// Whether the gesture already fired; further motion is ignored until the finger lifts.
+     latched: bool,
+ }
+ 
+ impl EdgeSwipeTracker {
+-    pub fn touch_down(&mut self, slot: TouchSlot, pos: Point<f64, Logical>, bottom_edge_y: f64) {
+-        if self.slot.is_some() {
++    /// Arm tracking if `pos` falls in an edge/corner zone of `output_geom`. A second finger
++    /// while tracking clears it instead (single-finger discipline). Returns the zone that
++    /// was armed, if any.
++    pub fn touch_down(
++        &mut self,
++        slot: TouchSlot,
++        pos: Point<f64, Logical>,
++        output_geom: Rectangle<f64, Logical>,
++    ) -> Option<SwipeZone> {
++        if self.tracked.is_some() {
+             // A second finger landed; this is not a clean single-finger gesture.
+-            self.slot = None;
+-            return;
++            self.tracked = None;
++            return None;
+         }
+ 
+-        if pos.y >= bottom_edge_y - EDGE_ZONE_PX {
+-            debug!(
+-                "touch_edge_swipe: tracking from y={:.0} (bottom edge at {:.0})",
+-                pos.y, bottom_edge_y
+-            );
+-            self.slot = Some(slot);
+-            self.start = pos;
+-            self.bottom_edge_y = bottom_edge_y;
+-            self.latched = false;
+-        } else if pos.y >= bottom_edge_y - EDGE_ZONE_PX * 2.0 {
+-            debug!(
+-                "touch_edge_swipe: near-miss start y={:.0} (zone starts at {:.0})",
+-                pos.y,
+-                bottom_edge_y - EDGE_ZONE_PX
+-            );
+-        }
++        let zone = SwipeZone::classify(pos, output_geom)?;
++        debug!(
++            "touch_edge_swipe: tracking zone {zone:?} from ({:.0},{:.0})",
++            pos.x, pos.y
++        );
++        self.tracked = Some(Tracked {
++            slot,
++            start: pos,
++            zone,
++            latched: false,
++        });
++        Some(zone)
+     }
+ 
+-    /// Feed finger motion; returns `true` exactly once when the upward swipe triggers.
+-    pub fn touch_motion(&mut self, slot: TouchSlot, pos: Point<f64, Logical>) -> bool {
+-        if self.slot != Some(slot) || self.latched {
+-            return false;
++    /// Feed finger motion; returns the fired zone exactly once per stroke.
++    pub fn touch_motion(&mut self, slot: TouchSlot, pos: Point<f64, Logical>) -> Option<SwipeZone> {
++        let tracked = self.tracked.as_mut()?;
++        if tracked.slot != slot || tracked.latched {
++            return None;
+         }
+ 
+-        let dx = pos.x - self.start.x;
+-        let dy = pos.y - self.start.y;
++        let dx = pos.x - tracked.start.x;
++        let dy = pos.y - tracked.start.y;
+ 
+-        if dy <= -TRIGGER_PX && dy.abs() >= dx.abs() {
+-            self.latched = true;
+-            debug!("touch_edge_swipe: bottom edge swipe triggered");
+-            return true;
++        if tracked.zone.triggered(dx, dy) {
++            tracked.latched = true;
++            debug!("touch_edge_swipe: {:?} swipe triggered", tracked.zone);
++            return Some(tracked.zone);
+         }
+ 
+-        false
++        None
+     }
+ 
+     pub fn touch_up(&mut self, slot: TouchSlot) {
+-        if self.slot == Some(slot) {
+-            self.slot = None;
++        if self.tracked.as_ref().is_some_and(|t| t.slot == slot) {
++            self.tracked = None;
+         }
+     }
+ 
+     /// Drop any in-progress tracking.
+     pub fn reset(&mut self) {
+-        self.slot = None;
++        self.tracked = None;
+     }
+ }
+ 
+@@ -194,47 +271,244 @@ mod tests {
+         Point::from((x, y))
+     }
+ 
++    fn geom(x: f64, y: f64, w: f64, h: f64) -> Rectangle<f64, Logical> {
++        Rectangle::new((x, y), (w, h))
++    }
++
+     #[test]
+     fn swipe_up_from_bottom_edge_triggers() {
+         let mut tracker = EdgeSwipeTracker::default();
+-        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
+-        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1240.0)));
+-        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(500.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Bottom)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 1240.0)), None);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(500.0, 1220.0)),
++            Some(SwipeZone::Bottom)
++        );
+         // Latched: no second trigger.
+-        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1000.0)));
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 1000.0)), None);
+     }
+ 
+     #[test]
+-    fn swipe_down_or_sideways_does_not_trigger() {
++    fn swipe_down_from_top_edge_triggers() {
+         let mut tracker = EdgeSwipeTracker::default();
+-        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
+-        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1300.0)));
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(500.0, 10.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Top)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 30.0)), None);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(500.0, 60.0)),
++            Some(SwipeZone::Top)
++        );
++    }
++
++    #[test]
++    fn swipe_right_from_left_edge_triggers() {
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(10.0, 640.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Left)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(30.0, 640.0)), None);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(60.0, 640.0)),
++            Some(SwipeZone::Left)
++        );
++    }
++
++    #[test]
++    fn swipe_left_from_right_edge_triggers() {
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(990.0, 640.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Right)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(955.0, 640.0)), None);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(950.0, 640.0)),
++            Some(SwipeZone::Right)
++        );
++    }
++
++    #[test]
++    fn wrong_direction_does_not_trigger() {
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), geom(0., 0., 1000., 1280.));
++        // Downward motion from the bottom edge.
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 1300.0)), None);
+         // Mostly-horizontal movement past the threshold.
+-        assert!(!tracker.touch_motion(slot(0), pt(700.0, 1240.0)));
++        assert_eq!(tracker.touch_motion(slot(0), pt(700.0, 1240.0)), None);
++
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(10.0, 640.0), geom(0., 0., 1000., 1280.));
++        // Leftward motion from the left edge.
++        assert_eq!(tracker.touch_motion(slot(0), pt(-30.0, 640.0)), None);
++    }
++
++    #[test]
++    fn corner_swipes_trigger() {
++        let g = geom(0., 0., 1000., 1280.);
++
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(10.0, 10.0), g),
++            Some(SwipeZone::TopLeft)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(25.0, 25.0)), None);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(31.0, 31.0)),
++            Some(SwipeZone::TopLeft)
++        );
++
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(990.0, 10.0), g),
++            Some(SwipeZone::TopRight)
++        );
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(965.0, 35.0)),
++            Some(SwipeZone::TopRight)
++        );
++
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(10.0, 1270.0), g),
++            Some(SwipeZone::BottomLeft)
++        );
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(35.0, 1245.0)),
++            Some(SwipeZone::BottomLeft)
++        );
++
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(990.0, 1270.0), g),
++            Some(SwipeZone::BottomRight)
++        );
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(965.0, 1245.0)),
++            Some(SwipeZone::BottomRight)
++        );
++    }
++
++    #[test]
++    fn mostly_straight_swipe_near_corner_does_not_trigger() {
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(10.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::BottomLeft)
++        );
++        // Mostly-horizontal: dy too small for the corner, dominance fails the bottom edge.
++        assert_eq!(tracker.touch_motion(slot(0), pt(200.0, 1255.0)), None);
++        // Continuing right past any edge threshold still fires nothing.
++        assert_eq!(tracker.touch_motion(slot(0), pt(400.0, 1256.0)), None);
++
++        // Mostly-vertical mirror.
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(10.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::BottomLeft)
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(25.0, 1000.0)), None);
++    }
++
++    #[test]
++    fn corner_zone_wins_over_edges() {
++        assert_eq!(
++            SwipeZone::classify(pt(5.0, 5.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::TopLeft)
++        );
++        assert_eq!(
++            SwipeZone::classify(pt(995.0, 1275.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::BottomRight)
++        );
+     }
+ 
+     #[test]
+     fn touch_outside_edge_zone_ignored() {
+         let mut tracker = EdgeSwipeTracker::default();
+-        tracker.touch_down(slot(0), pt(500.0, 1000.0), 1280.0);
+-        assert!(!tracker.touch_motion(slot(0), pt(500.0, 900.0)));
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(500.0, 1000.0), geom(0., 0., 1000., 1280.)),
++            None
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 900.0)), None);
++
++        // Zone boundary: exactly 48px from the bottom edge arms, 49px does not.
++        assert_eq!(
++            tracker.touch_down(slot(1), pt(500.0, 1232.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Bottom)
++        );
++        tracker.touch_up(slot(1));
++        assert_eq!(
++            tracker.touch_down(slot(1), pt(500.0, 1231.0), geom(0., 0., 1000., 1280.)),
++            None
++        );
+     }
+ 
+     #[test]
+     fn second_finger_aborts() {
+         let mut tracker = EdgeSwipeTracker::default();
+-        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
+-        tracker.touch_down(slot(1), pt(600.0, 1270.0), 1280.0);
+-        assert!(!tracker.touch_motion(slot(0), pt(500.0, 1200.0)));
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(500.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Bottom)
++        );
++        assert_eq!(
++            tracker.touch_down(slot(1), pt(600.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            None
++        );
++        assert_eq!(tracker.touch_motion(slot(0), pt(500.0, 1200.0)), None);
+     }
+ 
+     #[test]
+     fn rearms_after_finger_lifts() {
+         let mut tracker = EdgeSwipeTracker::default();
+-        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
+-        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++        tracker.touch_down(slot(0), pt(500.0, 1270.0), geom(0., 0., 1000., 1280.));
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(500.0, 1220.0)),
++            Some(SwipeZone::Bottom)
++        );
+         tracker.touch_up(slot(0));
+-        tracker.touch_down(slot(0), pt(500.0, 1270.0), 1280.0);
+-        assert!(tracker.touch_motion(slot(0), pt(500.0, 1220.0)));
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(500.0, 1270.0), geom(0., 0., 1000., 1280.)),
++            Some(SwipeZone::Bottom)
++        );
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(500.0, 1220.0)),
++            Some(SwipeZone::Bottom)
++        );
++    }
++
++    #[test]
++    fn geometry_is_per_output() {
++        // The same global point is 10px from the second output's left edge...
++        assert_eq!(
++            SwipeZone::classify(pt(1930.0, 700.0), geom(1920., 0., 1000., 1280.)),
++            Some(SwipeZone::Left)
++        );
++        // ...and mid-screen on the first output (classify assumes the point
++        // lies inside the geometry it is given, as output_under() guarantees).
++        assert_eq!(
++            SwipeZone::classify(pt(1000.0, 700.0), geom(0., 0., 1920., 1280.)),
++            None
++        );
++        // Right edge of the first output.
++        assert_eq!(
++            SwipeZone::classify(pt(1910.0, 700.0), geom(0., 0., 1920., 1280.)),
++            Some(SwipeZone::Right)
++        );
++
++        // End-to-end against the second output's geometry.
++        let mut tracker = EdgeSwipeTracker::default();
++        assert_eq!(
++            tracker.touch_down(slot(0), pt(1930.0, 700.0), geom(1920., 0., 1000., 1280.)),
++            Some(SwipeZone::Left)
++        );
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(1980.0, 700.0)),
++            Some(SwipeZone::Left)
++        );
+     }
+ }
+-- 
+2.55.0
+

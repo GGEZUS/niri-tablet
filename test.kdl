@@ -15,6 +15,12 @@ gestures {
         tap-4 { spawn "foot"; }    // 4+-finger tap (stand-in for the launcher)
     }
     touchscreen-edge-swipe {
-        spawn "foot"   // stand-in for the launcher when testing nested
+        bottom { spawn "foot"; }   // stand-in for the launcher when testing nested
+        left { focus-column-left; }
+        right { focus-column-right; }
+    }
+    touchscreen-corner-swipe {
+        top-left { spawn "foot"; }
+        bottom-right { close-window; }
     }
 }

@@ -58,10 +58,27 @@ gestures {
         }
     }
 
-    // Bottom-edge swipe — implemented but unbound (default off).
-    // Single finger starting within ~48px of the bottom edge, moving up
-    // >40px; plain taps in that strip still reach the shell/bar.
-    // touchscreen-edge-swipe { spawn-sh "…"; }
+    // Edge swipes — single finger starting within ~48px of a screen edge,
+    // moving inward >40px (per-edge binding, any action). Plain taps and
+    // short drags in the strips still reach the shell/bar; the gesture only
+    // takes the touch once it triggers. Don't bind an edge occupied by a
+    // swipe-driven panel (e.g. a top notification pull-down).
+    // touchscreen-edge-swipe {
+    //     bottom { spawn-sh "noctalia msg panel-toggle launcher"; }
+    //     top { spawn-sh "…"; }
+    //     left { focus-column-left; }
+    //     right { focus-column-right; }
+    // }
+
+    // Corner swipes — single finger starting in the ~48px corner square,
+    // moving diagonally inward >20px on both axes. Mostly-straight swipes
+    // near a corner fire nothing, so the edges stay usable up to it.
+    // touchscreen-corner-swipe {
+    //     top-left { …; }
+    //     top-right { …; }
+    //     bottom-left { …; }
+    //     bottom-right { …; }
+    // }
 }
 
 // Using wvkbd as the OSK with a non-US system layout? A two-group xkb layout

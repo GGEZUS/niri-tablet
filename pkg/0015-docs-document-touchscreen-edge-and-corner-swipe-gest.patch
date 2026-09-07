@@ -1,0 +1,137 @@
+From 2843d174bea29fc799180658d8e6eb30fa73485e Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Mon, 7 Sep 2026 23:17:41 +0100
+Subject: [PATCH 15/15] docs: document touchscreen edge and corner swipe
+ gestures
+
+Add touchscreen-edge-swipe and touchscreen-corner-swipe sections to the
+gestures config reference (thresholds, zone behavior, layer-shell
+caveat), extend the overview block and the debug-log wording, and add
+Edge Swipes / Corner Swipes to the Gestures overview page.
+---
+ docs/wiki/Configuration:-Gestures.md | 67 +++++++++++++++++++++++++++-
+ docs/wiki/Gestures.md                | 21 +++++++++
+ 2 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 2d10729e..0d298feb 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -34,6 +34,20 @@ gestures {
+         // off
+     }
+ 
++    // touchscreen-edge-swipe {
++    //     // bottom { toggle-overview; }
++    //     // top { spawn-sh "panel-toggle"; }
++    //     // left { focus-column-left; }
++    //     // right { focus-column-right; }
++    // }
++
++    // touchscreen-corner-swipe {
++    //     // top-left { ...; }
++    //     // top-right { ...; }
++    //     // bottom-left { ...; }
++    //     // bottom-right { ...; }
++    // }
++
+     // debug-log
+ }
+ ```
+@@ -143,9 +157,60 @@ gestures {
+ }
+ ```
+ 
++### `touchscreen-edge-swipe`
++
++<sup>Since: 26.04</sup>
++
++Single-finger swipes that start at a screen edge: a finger starting within ~48 logical
++pixels of an edge and swiping inward past ~40 pixels (with the inward direction dominant)
++runs the action bound to that edge. Each of `bottom` (swipe up), `top` (swipe down),
++`left` (swipe right) and `right` (swipe left) takes any niri action.
++
++Touches in an edge strip deliver to applications normally until the trigger distance is
++crossed — plain taps and short drags on shell bars and app content keep working — and the
++compositor cancels the touch (and swallows the rest of the stroke) only when the gesture
++fires. A second finger landing cancels the gesture.
++
++The zones follow the output the touch lands on, including its transform, so edges stay in
++the visual orientation on rotated tablets and per-output on multi-monitor setups.
++
++Zones left unbound are inert. Avoid binding edges occupied by swipe-driven shell surfaces
++(e.g. a pull-down notification panel along the top): the bound gesture would fire mid-drag.
++
++```kdl
++gestures {
++    touchscreen-edge-swipe {
++        bottom { toggle-overview; }
++        top { spawn-sh "panel-toggle"; }
++    }
++}
++```
++
++### `touchscreen-corner-swipe`
++
++<sup>Since: 26.04</sup>
++
++Single-finger diagonal swipes that start at a screen corner: the corner zones are the
++~48 logical pixel squares where two edge strips meet. A swipe must move inward by ~20
++pixels on both axes — a mostly-straight swipe starting in a corner zone deliberately
++triggers nothing, so the adjacent edges stay usable right up to the corner.
++
++Corners win over edges when the touch starts within range of both. Each of `top-left`,
++`top-right`, `bottom-left` and `bottom-right` takes any niri action; unbound corners are
++inert.
++
++```kdl
++gestures {
++    touchscreen-corner-swipe {
++        top-left { focus-column-left; }
++        bottom-right { close-window; }
++    }
++}
++```
++
+ ### `debug-log`
+ 
+-Log touchscreen gesture events for debugging: every finger down/up/motion with slot ids, positions and timestamps, gesture recognition (finger count, direction, hold vs quick), and the action dispatched for taps, discrete swipes and edge swipes.
++Log touchscreen gesture events for debugging: every finger down/up/motion with slot ids, positions and timestamps, gesture recognition (finger count, direction, hold vs quick), and the action dispatched for taps, discrete swipes and edge/corner swipes.
+ 
+ The lines are prefixed `gesture-debug:` and written at info level, so they show up wherever niri's stderr goes (the journal for systemd sessions) without touching `RUST_LOG`. Off by default; the option can be toggled live, it takes effect on the next touch event.
+ 
+diff --git a/docs/wiki/Gestures.md b/docs/wiki/Gestures.md
+index 204438e3..4655a856 100644
+--- a/docs/wiki/Gestures.md
++++ b/docs/wiki/Gestures.md
+@@ -77,6 +77,27 @@ The gesture uses the same continuous carousel animation as the touchpad.
+ 
+ Move the view horizontally with three-finger horizontal swipes on the touchscreen.
+ 
++#### Edge Swipes
++
++<sup>Since: 26.04</sup>
++
++Single-finger swipes that start within ~48 logical pixels of a screen edge and move inward
++run a configurable action — for example opening the app launcher from the bottom edge.
++Each of the four edges binds its own action; touches deliver to applications normally
++until the gesture triggers.
++
++See [`touchscreen-edge-swipe`](./Configuration:-Gestures.md#touchscreen-edge-swipe).
++
++#### Corner Swipes
++
++<sup>Since: 26.04</sup>
++
++Single-finger diagonal swipes that start at a screen corner run a configurable action per
++corner. The swipe must move inward on both axes, so mostly-straight swipes near a corner
++stay with the adjacent edges (or nothing at all).
++
++See [`touchscreen-corner-swipe`](./Configuration:-Gestures.md#touchscreen-corner-swipe).
++
+ ### All Pointing Devices
+ 
+ #### Drag-and-Drop Edge View Scroll
+-- 
+2.55.0
+
