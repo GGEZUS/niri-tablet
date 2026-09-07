@@ -8,7 +8,7 @@
 # NB: makepkg's exported flags are deliberately unset in build() — with
 # rustc's default lld they break linking of the libspa static C shim.
 pkgname=niri-tablet
-pkgver=26.04.12.g2e96de30
+pkgver=26.04.13.g3244c12a
 pkgrel=3
 pkgdesc='A scrollable-tiling Wayland compositor, with touchscreen gestures'
 url='https://github.com/GGEZUS/niri-tablet'
@@ -36,21 +36,23 @@ source=(
     '0010-fix-input-own-multi-finger-touch-sequences-gestures-.patch'
     '0011-fix-input-latch-gesture-ownership-through-smithay-s-.patch'
     '0012-fix-input-clear-touch-gesture-state-when-a-touch-dev.patch'
+    '0013-feat-input-gesture-debug-logging-behind-gestures-deb.patch'
 )
 sha256sums=(
     'SKIP'
-    '561b1a02305485d8d4c3cf3692beeff0370f10a4e74c5462cc7751d22bd5a31b'
-    'd6c7530caf8f57e858e97e267957dc881cfb440f723d59dfbb75a44b01b0e6d9'
-    'aa25b926e88bf00377d8d5c05c4c1ab0537109b7fee5d7f0396d9395a3ac3c9c'
-    '5a8b41c6e9dc884a159a0190d67a35c60161ab09d19ee6405cf0f37e064be517'
-    '2984481e2a29d6caba1ce093ed141bccef4ac3040d0dd4d9fda3c47fd70270ab'
-    '84bede71ccbee05a6bc16087bb009f3a933848e4e42fa48c4621efb4ab65f7a9'
-    '79306107814e1667368214fb6e1fb15f7d86fee7054f8fe2d263a50976e1c60e'
-    'b9ece81bc5a665281a40b2c40dc4e10ca54b12ee9b4bf03ba6ddb48d22129f18'
-    '1c754c3b2e53b1e9e8b50a8e4c1c05e1398d1dbafcb899d591e60d9f58f71ff8'
-    '522752cab8e9ec7111083bbb489ee8010c26aab84fffbec902ff8d28e2357080'
-    'cad323c519e29ab888cc79adfc03d8b3c55077ffc263911cac3f6997c4f4599e'
-    'd1cd8c2a548842f3cbd287eeef5b93f3a723032343b70ee7e7ea8572670018ba'
+    '3aaff72938f5a899e5d75b80003552cea44ec2778cae51a8fd79da78b8840216'
+    '05d051aede685c25774ffbc070737ba3ffc82fd640479a574dba58310d285840'
+    '4252ca29084471f1ffa15a593fe125a896b2dabff5ad8f30d719e6175e8cef4b'
+    '520e7b6d3ea8a3a479d5612ac084d2217bb1e588c5a1d50bc6bf0703c0e181ab'
+    '2f84a5ce8b262503d7f15918e79b0809eb9f8c10c8307c48dc96eb07df7314e7'
+    '558da6a0a62b74f21ce75a2e2fb45995a825ee615ef1cba08cbb3b053c7c5683'
+    '9f59851655a9f7d3a2765a42b70e3b2c6028993461b9fb7408b0cae41af46f65'
+    'a5a1017952b120502aef3a6c50ac0bf46b670fd4b6f7cde05dcb1e582e171c1f'
+    '55e7a7c2119fde040144cd1e0f4ede2b4fa635d493e5e083f40870474caadb83'
+    '3eebdda896b1c1f03bc2132ed2b85c89386b0be8e2616341c8840c1ad28edacd'
+    '9a603dd22645ce3121b814b77962352f478ec525978b0e8e563a02ba6d4768fe'
+    '1763a61113e0817d645bd596f940106daee7106f29b7bf68150b21d2e2c9da6b'
+    '466577f94dc08925ce2defbd19c581eff0fb0afcd69cf204bfb76b800cb33071'
 )
 # Keep debug symbols on purpose: a compositor panic takes the whole session
 # down, and the journal backtrace is only readable with them (~128 MB binary

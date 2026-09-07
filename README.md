@@ -69,20 +69,45 @@ Off by default. In `gestures` mode dots appear only while enough fingers
 are down concurrently for a gesture (`touchscreen-swipe.fingers`), so
 ordinary taps and scrolling stay clean.
 
+### Gesture debug logging
+
+`debug-log` turns on per-event logging of the touchscreen gesture stack:
+every finger down/up/motion with slot ids, positions and timestamps, the
+recognition decision (finger count, direction, hold vs quick), and the
+action dispatched for taps, discrete swipes and edge swipes. Every line is
+prefixed `gesture-debug:`.
+
+```kdl
+gestures {
+    debug-log
+}
+```
+
+Made for bug reports: enable it, reproduce the misbehaving gesture, then
+collect the lines. Under systemd sessions (including NixOS):
+
+```bash
+journalctl --user -u niri.service --since -10m | grep gesture-debug
+```
+
+Running niri from a terminal instead? The lines go to its stderr. The
+option can be toggled live: niri reloads the config on save and the flag
+applies from the next touch. Off by default.
+
 ## How it works
 
 niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 12 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 13 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
   flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
   client-side so apps don't react to them), the optional edge swipe, touch
-  point
-  visualization, and clean recovery when a touch device disappears
-  mid-gesture (hotplug/unplug no longer wedges the session). The animated
+  point visualization, clean recovery when a touch device disappears
+  mid-gesture (hotplug/unplug no longer wedges the session), and opt-in
+  gesture event logging for bug reports. The animated
   swipes run through the same spring-physics
   pipeline as touchpad gestures — rotation-proof logical coordinates, live
   follow, inertia.
@@ -258,7 +283,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 12 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 13 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.

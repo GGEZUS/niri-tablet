@@ -13,6 +13,13 @@ gestures {
     //   "all"       every finger (debugging)
     show-touch-points "gestures";
 
+    // Gesture debug logging (bug reports): every finger down/up/motion with
+    // timestamps, recognition decisions and dispatched actions, at info level
+    // with a "gesture-debug:" prefix. Collect with:
+    //   journalctl --user -u niri.service --since -10m | grep gesture-debug
+    // Can be toggled live; takes effect from the next touch. Off by default.
+    // debug-log
+
     touchscreen-swipe {
         // Minimum fingers for the animated swipes (drag = view scroll
         // horizontally, workspace carousel vertically).

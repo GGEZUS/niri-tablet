@@ -1,0 +1,711 @@
+From 3244c12ac85f8a4b34a7136076ca3aee2d30ce6a Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Mon, 7 Sep 2026 20:20:11 +0100
+Subject: [PATCH 13/13] feat(input): gesture debug logging behind gestures
+ debug-log
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+First external bug report (NixOS): 4-finger gestures act as 3-finger
+ones — the video shows all four touch points, so the compositor
+receives every touch, but the 3-finger action runs. Not reproducible
+on the maintainer's hardware, so diagnose remotely.
+
+New `gestures { debug-log }` flag (off by default) turns on an
+info-level event stream with a `gesture-debug:` prefix:
+
+- every finger down/up/motion with slot id, position and timestamp
+  (motion only while a sequence is underway, so single-finger app
+  scrolling doesn't flood);
+- phase transitions: entering recognizing, late finger joins, and the
+  extra touch_down that arrives after recognition — currently only a
+  trace line, invisible at the default log filter;
+- recognition results (finger count, direction, hold vs quick) and the
+  dispatch decision for taps, discrete swipes and edge swipes.
+
+The flag lives on the tracker and is re-synced from the live config on
+every touch event, so toggling it takes effect without a re-login.
+Collection instructions in the README; no behavior change otherwise.
+---
+ docs/wiki/Configuration:-Gestures.md |  20 ++++
+ niri-config/src/gestures.rs          |  10 ++
+ niri-config/src/lib.rs               |  18 +++
+ src/input/mod.rs                     |  59 +++++++++-
+ src/input/touch_swipe_tracker.rs     | 157 +++++++++++++++++++++++----
+ src/niri.rs                          |   1 +
+ 6 files changed, 242 insertions(+), 23 deletions(-)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index b42992b6..2d10729e 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -33,6 +33,8 @@ gestures {
+         fingers 3
+         // off
+     }
++
++    // debug-log
+ }
+ ```
+ 
+@@ -140,3 +142,21 @@ gestures {
+     }
+ }
+ ```
++
++### `debug-log`
++
++Log touchscreen gesture events for debugging: every finger down/up/motion with slot ids, positions and timestamps, gesture recognition (finger count, direction, hold vs quick), and the action dispatched for taps, discrete swipes and edge swipes.
++
++The lines are prefixed `gesture-debug:` and written at info level, so they show up wherever niri's stderr goes (the journal for systemd sessions) without touching `RUST_LOG`. Off by default; the option can be toggled live, it takes effect on the next touch event.
++
++```kdl
++gestures {
++    debug-log
++}
++```
++
++To capture a reproduction:
++
++```bash
++journalctl --user -u niri.service --since -10m | grep gesture-debug
++```
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 0646b928..1fc31725 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -13,6 +13,11 @@ pub struct Gestures {
+     /// Visualize touch points on screen (translucent dots that follow the
+     /// fingers). Meant for demo videos and debugging gestures; off by default.
+     pub show_touch_points: ShowTouchPoints,
++    /// Log every touch gesture event (finger down/up/motion with slots and
++    /// timestamps, recognition decisions, dispatched actions) at info level
++    /// with a `gesture-debug:` prefix. Meant for debugging gesture issues
++    /// remotely; off by default.
++    pub debug_log: bool,
+ }
+ 
+ #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+@@ -29,6 +34,8 @@ pub struct GesturesPart {
+     pub touchscreen_edge_swipe: Option<TouchscreenEdgeSwipe>,
+     #[knuffel(child, unwrap(argument))]
+     pub show_touch_points: Option<ShowTouchPoints>,
++    #[knuffel(child)]
++    pub debug_log: bool,
+ }
+ 
+ impl MergeWith<GesturesPart> for Gestures {
+@@ -44,6 +51,9 @@ impl MergeWith<GesturesPart> for Gestures {
+         if let Some(show_touch_points) = part.show_touch_points {
+             self.show_touch_points = show_touch_points;
+         }
++        if part.debug_log {
++            self.debug_log = true;
++        }
+     }
+ }
+ 
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 3dd4b656..fb895a72 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -648,6 +648,22 @@ mod tests {
+         assert_eq!(config.input.keyboard.repeat_rate, 25);
+     }
+ 
++    #[test]
++    fn gestures_debug_log() {
++        let parsed = do_parse(
++            r#"
++            gestures {
++                debug-log
++            }
++            "#,
++        );
++        assert!(parsed.gestures.debug_log);
++
++        // Off by default.
++        let parsed = Config::parse_mem("").unwrap();
++        assert!(!parsed.gestures.debug_log);
++    }
++
+     #[track_caller]
+     fn do_parse(text: &str) -> Config {
+         Config::parse_mem(text)
+@@ -870,6 +886,7 @@ mod tests {
+                     max-speed 50
+                 }
+                 show-touch-points "gestures"
++                debug-log
+             }
+ 
+             environment {
+@@ -1682,6 +1699,7 @@ mod tests {
+                     spawn: [],
+                 },
+                 show_touch_points: Gestures,
++                debug_log: true,
+             },
+             overview: Overview {
+                 zoom: 0.5,
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index f26ba92f..ea42dfbd 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4108,6 +4108,14 @@ impl State {
+         self.compute_absolute_location(evt, self.niri.output_for_touch())
+     }
+ 
++    /// Refresh the touch tracker's debug flag from the live config
++    /// (`gestures { debug-log }`). Called on every touch event so toggling
++    /// the option takes effect without a re-login.
++    fn sync_touch_debug_log(&mut self) {
++        let debug_log = self.niri.config.borrow().gestures.debug_log;
++        self.niri.touch_swipe_tracker.set_debug_log(debug_log);
++    }
++
+     fn on_touch_down<I: InputBackend>(&mut self, evt: I::TouchDownEvent) {
+         let Some(handle) = self.niri.seat.get_touch() else {
+             return;
+@@ -4117,6 +4125,8 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        self.sync_touch_debug_log();
++
+         // Touch point visualization (pure observer; never consumes events).
+         if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off {
+             let min_fingers =
+@@ -4164,6 +4174,11 @@ impl State {
+                 || self.niri.touch_swipe_tracker.is_active())
+         {
+             debug!("touch: multi-finger gesture owns the touch stream");
++            if self.niri.config.borrow().gestures.debug_log {
++                info!(
++                    "gesture-debug: gesture owns the touch stream (client touches cancelled)"
++                );
++            }
+             // Drop the implicit grab if any: the synthetic lifts below end
+             // the touches the client already saw, and suspension takes over
+             // delivery from here.
+@@ -4211,6 +4226,15 @@ impl State {
+             if let Some((output, _)) = self.niri.output_under(pos) {
+                 let geom = self.niri.global_space.output_geometry(&output).unwrap();
+                 let bottom_edge_y = f64::from(geom.loc.y) + f64::from(geom.size.h);
++                if self.niri.config.borrow().gestures.debug_log {
++                    info!(
++                        "gesture-debug: edge-swipe candidate down slot={} pos=({:.0},{:.0}) edge_y={:.0}",
++                        i32::from(slot),
++                        pos.x,
++                        pos.y,
++                        bottom_edge_y
++                    );
++                }
+                 self.niri
+                     .touch_edge_swipe_tracker
+                     .touch_down(slot, pos, bottom_edge_y);
+@@ -4345,6 +4369,8 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        self.sync_touch_debug_log();
++
+         // Touch point visualization: the dot remembers its position, so the
+         // (positionless) up event just starts its fade-out.
+         if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
+@@ -4380,6 +4406,12 @@ impl State {
+                 } else {
+                     touchscreen_swipe.tap.clone()
+                 };
++                if self.niri.config.borrow().gestures.debug_log {
++                    info!(
++                        "gesture-debug: tap dispatch: fingers={} action={:?}",
++                        fingers, action
++                    );
++                }
+                 if let Some(action) = action {
+                     self.do_action(action, false);
+                 }
+@@ -4419,6 +4451,12 @@ impl State {
+         // Run a deferred discrete-gesture action now that all grab callbacks
+         // (and the seat's touch lock) have returned.
+         if let Some(action) = self.niri.pending_touch_action.take() {
++            if self.niri.config.borrow().gestures.debug_log {
++                info!(
++                    "gesture-debug: discrete gesture completed, action={:?}",
++                    action
++                );
++            }
+             self.do_action(action, false);
+         }
+     }
+@@ -4431,6 +4469,8 @@ impl State {
+         };
+         let slot = evt.slot();
+ 
++        self.sync_touch_debug_log();
++
+         // Touch point visualization (pure observer; never consumes events).
+         if self.niri.config.borrow().gestures.show_touch_points != ShowTouchPoints::Off
+             && !self.niri.touch_points.is_empty()
+@@ -4522,10 +4562,21 @@ impl State {
+                                     None
+                                 };
+ 
++                                if self.niri.config.borrow().gestures.debug_log {
++                                    info!(
++                                        "gesture-debug: swipe dispatch: fingers={} hold={} direction={:?} discrete={:?}",
++                                        fingers, is_hold, direction, discrete_action
++                                    );
++                                }
++
+                                 let fingers_cfg = touchscreen_swipe.fingers as usize;
++                                let debug_log_cfg =
++                                    self.niri.config.borrow().gestures.debug_log;
+                                 let tracker = std::mem::replace(
+                                     &mut self.niri.touch_swipe_tracker,
+-                                    crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(fingers_cfg),
++                                    crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(
++                                        fingers_cfg, debug_log_cfg,
++                                    ),
+                                 );
+                                 let start_data = TouchGrabStartData {
+                                     focus: None,
+@@ -4604,6 +4655,12 @@ impl State {
+                 // do_action() cancels active touches, releasing any grabs;
+                 // run it before installing the swallow grab below.
+                 if !spawn_cmd.is_empty() {
++                    if self.niri.config.borrow().gestures.debug_log {
++                        info!(
++                            "gesture-debug: edge-swipe trigger spawn={:?}",
++                            spawn_cmd
++                        );
++                    }
+                     self.do_action(Action::Spawn(spawn_cmd), false);
+                 }
+ 
+diff --git a/src/input/touch_swipe_tracker.rs b/src/input/touch_swipe_tracker.rs
+index 9d8d6760..f1fe6bcf 100644
+--- a/src/input/touch_swipe_tracker.rs
++++ b/src/input/touch_swipe_tracker.rs
+@@ -12,6 +12,18 @@ use std::time::Duration;
+ use smithay::backend::input::TouchSlot;
+ use smithay::utils::{Logical, Point};
+ 
++/// Emit a `gesture-debug:` log line, but only when the user opted in with
++/// `gestures { debug-log }`. The lines are the per-finger event stream used
++/// for remote debugging of gesture issues; they go to info so they survive
++/// any RUST_LOG the session runs with.
++macro_rules! gesture_debug {
++    ($self:expr, $($arg:tt)*) => {
++        if $self.debug_log {
++            info!("gesture-debug: {}", format_args!($($arg)*));
++        }
++    };
++}
++
+ /// Recognition threshold in logical pixels. The cumulative movement of the centroid must exceed
+ /// this before a gesture is recognized. Copied from GNOME Shell / libadwaita (same as touchpad).
+ const GESTURE_THRESHOLD_PX: f64 = 16.0;
+@@ -109,10 +121,12 @@ pub struct TouchSwipeGestureTracker {
+     recognize_started: Option<Duration>,
+     /// Maximum simultaneous fingers seen during the current touch sequence.
+     max_slots: usize,
++    /// Emit the `gesture-debug:` event stream (see `gestures { debug-log }`).
++    debug_log: bool,
+ }
+ 
+ impl TouchSwipeGestureTracker {
+-    pub fn new(min_fingers: usize) -> Self {
++    pub fn new(min_fingers: usize, debug_log: bool) -> Self {
+         Self {
+             slots: HashMap::new(),
+             tracked_slots: Vec::new(),
+@@ -124,9 +138,15 @@ impl TouchSwipeGestureTracker {
+             first_down: None,
+             recognize_started: None,
+             max_slots: 0,
++            debug_log,
+         }
+     }
+ 
++    /// Toggle the `gesture-debug:` event stream (live config reload).
++    pub fn set_debug_log(&mut self, on: bool) {
++        self.debug_log = on;
++    }
++
+     /// Returns `true` if a gesture is currently active (recognized and emitting updates).
+     pub fn is_active(&self) -> bool {
+         self.phase == Phase::Active
+@@ -168,6 +188,15 @@ impl TouchSwipeGestureTracker {
+     ) -> Option<GestureEvent> {
+         // If a gesture is already active, ignore additional fingers.
+         if self.phase == Phase::Active {
++            gesture_debug!(
++                self,
++                "down slot={} pos=({:.0},{:.0}) t={:?} IGNORED: gesture already active with {} fingers",
++                i32::from(slot),
++                pos.x,
++                pos.y,
++                timestamp,
++                self.tracked_slots.len()
++            );
+             trace!("touch_swipe: ignoring extra touch_down while active");
+             return None;
+         }
+@@ -185,6 +214,17 @@ impl TouchSwipeGestureTracker {
+         self.slots.insert(slot, pos);
+         self.max_slots = self.max_slots.max(self.slots.len());
+ 
++        gesture_debug!(
++            self,
++            "down slot={} pos=({:.0},{:.0}) t={:?} fingers={} phase={:?}",
++            i32::from(slot),
++            pos.x,
++            pos.y,
++            timestamp,
++            self.slots.len(),
++            self.phase
++        );
++
+         // Transition from Idle to Recognizing once we have enough fingers.
+         if self.phase == Phase::Idle && self.slots.len() >= self.min_fingers {
+             debug!(
+@@ -196,12 +236,25 @@ impl TouchSwipeGestureTracker {
+             self.start_positions = self.slots.clone();
+             self.prev_centroid = self.centroid_of_tracked();
+             self.recognize_started = Some(timestamp);
++            gesture_debug!(
++                self,
++                "recognizing: tracking {} of {} slots (min {})",
++                self.tracked_slots.len(),
++                self.slots.len(),
++                self.min_fingers
++            );
+         } else if self.phase == Phase::Recognizing {
+             // An additional finger landing before the movement threshold is
+             // crossed joins the gesture (it counts toward the reported finger
+             // count and the centroid).
+             self.tracked_slots.push(slot);
+             self.start_positions.insert(slot, pos);
++            gesture_debug!(
++                self,
++                "late join: slot={} now tracking {} fingers",
++                i32::from(slot),
++                self.tracked_slots.len()
++            );
+         }
+ 
+         None
+@@ -221,6 +274,20 @@ impl TouchSwipeGestureTracker {
+             return None;
+         }
+ 
++        // Only log motion once a sequence is underway; single-finger app
++        // scrolling in Idle would flood the stream.
++        if self.phase != Phase::Idle {
++            gesture_debug!(
++                self,
++                "motion slot={} pos=({:.0},{:.0}) t={:?} fingers={}",
++                i32::from(slot),
++                pos.x,
++                pos.y,
++                timestamp,
++                self.slots.len()
++            );
++        }
++
+         match self.phase {
+             Phase::Idle => None,
+             Phase::Recognizing => self.try_recognize(timestamp),
+@@ -250,10 +317,24 @@ impl TouchSwipeGestureTracker {
+             Phase::Active => {
+                 // If one of the original tracked slots lifts, end the gesture.
+                 if self.tracked_slots.contains(&slot) {
++                    gesture_debug!(
++                        self,
++                        "up slot={} t={:?} fingers={}: tracked finger lifted, ending gesture",
++                        i32::from(slot),
++                        timestamp,
++                        self.slots.len()
++                    );
+                     trace!("touch_swipe: tracked slot lifted, ending gesture");
+                     self.reset_internal();
+                     Some(GestureEvent::End { timestamp })
+                 } else {
++                    gesture_debug!(
++                        self,
++                        "up slot={} t={:?} fingers={}: untracked finger (gesture continues)",
++                        i32::from(slot),
++                        timestamp,
++                        self.slots.len()
++                    );
+                     None
+                 }
+             }
+@@ -263,6 +344,13 @@ impl TouchSwipeGestureTracker {
+                 // all fingers are up before deciding.
+                 self.tracked_slots.retain(|s| *s != slot);
+                 self.start_positions.remove(&slot);
++                gesture_debug!(
++                    self,
++                    "up slot={} t={:?} fingers={} phase=Recognizing",
++                    i32::from(slot),
++                    timestamp,
++                    self.slots.len()
++                );
+                 if self.slots.is_empty() {
+                     let is_tap = self
+                         .first_down
+@@ -272,8 +360,14 @@ impl TouchSwipeGestureTracker {
+                     self.reset_internal();
+                     if is_tap {
+                         debug!("touch_swipe: tap detected ({fingers} fingers)");
++                        gesture_debug!(self, "tap: {} fingers (max simultaneous)", fingers);
+                         Some(GestureEvent::Tap { fingers, timestamp })
+                     } else {
++                        gesture_debug!(
++                            self,
++                            "cancel: {} fingers lifted too slowly for a tap",
++                            fingers
++                        );
+                         Some(GestureEvent::Cancel)
+                     }
+                 } else {
+@@ -299,7 +393,7 @@ impl TouchSwipeGestureTracker {
+         self.first_down = None;
+         self.recognize_started = None;
+         self.max_slots = 0;
+-        // min_fingers is intentionally preserved across resets.
++        // min_fingers and debug_log are intentionally preserved across resets.
+     }
+ 
+     /// Compute the centroid of the currently tracked slots.
+@@ -368,6 +462,15 @@ impl TouchSwipeGestureTracker {
+                 "touch_swipe: hold-swipe recognized as {:?}, delta ({dx:.1}, {dy:.1})",
+                 self.direction
+             );
++            gesture_debug!(
++                self,
++                "recognized: HOLD-swipe fingers={} direction={:?} delta=({:.1},{:.1}) t={:?}",
++                self.tracked_slots.len(),
++                self.direction,
++                dx,
++                dy,
++                timestamp
++            );
+             return Some(GestureEvent::HoldSwipe {
+                 direction: self.direction,
+                 delta_x: dx,
+@@ -382,6 +485,16 @@ impl TouchSwipeGestureTracker {
+             self.direction
+         );
+ 
++        gesture_debug!(
++            self,
++            "recognized: swipe fingers={} direction={:?} delta=({:.1},{:.1}) t={:?}",
++            self.tracked_slots.len(),
++            self.direction,
++            dx,
++            dy,
++            timestamp
++        );
++
+         Some(GestureEvent::Begin {
+             direction: self.direction,
+             delta_x: dx,
+@@ -410,7 +523,7 @@ mod tests {
+ 
+     #[test]
+     fn no_gesture_with_fewer_than_three_fingers() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         assert!(tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0)).is_none());
+         assert!(tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0)).is_none());
+         // Move them a lot — still no gesture.
+@@ -425,7 +538,7 @@ mod tests {
+ 
+     #[test]
+     fn gesture_begins_after_threshold_with_three_fingers() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -455,7 +568,7 @@ mod tests {
+ 
+     #[test]
+     fn vertical_direction_detected() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -476,7 +589,7 @@ mod tests {
+ 
+     #[test]
+     fn phase_accessors_track_finger_count() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         assert!(tracker.is_idle());
+ 
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+@@ -502,7 +615,7 @@ mod tests {
+ 
+     #[test]
+     fn hold_swipe_detected_after_slow_threshold_crossing() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -539,7 +652,7 @@ mod tests {
+ 
+     #[test]
+     fn hold_swipe_vertical_carries_sign() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -565,7 +678,7 @@ mod tests {
+ 
+     #[test]
+     fn threshold_crossed_before_hold_threshold_is_quick_swipe() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -580,7 +693,7 @@ mod tests {
+ 
+     #[test]
+     fn hold_clock_starts_at_the_last_finger_landing() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         // Third finger lands late: the hold clock must start here, not at 0.
+@@ -596,7 +709,7 @@ mod tests {
+ 
+     #[test]
+     fn hold_without_movement_lifts_to_cancel_not_tap() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -609,7 +722,7 @@ mod tests {
+ 
+     #[test]
+     fn updates_emit_centroid_delta() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -636,7 +749,7 @@ mod tests {
+ 
+     #[test]
+     fn gesture_ends_on_tracked_slot_lift() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -655,7 +768,7 @@ mod tests {
+ 
+     #[test]
+     fn extra_finger_ignored_during_active_gesture() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -678,7 +791,7 @@ mod tests {
+ 
+     #[test]
+     fn tap_detected_when_fingers_lift_quickly() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(20));
+@@ -694,7 +807,7 @@ mod tests {
+ 
+     #[test]
+     fn slow_touch_sequence_cancels_instead_of_tap() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -708,7 +821,7 @@ mod tests {
+ 
+     #[test]
+     fn tap_below_finger_count_ignored() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
+ 
+@@ -719,7 +832,7 @@ mod tests {
+ 
+     #[test]
+     fn tap_reports_max_finger_count() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(10));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(20));
+@@ -737,7 +850,7 @@ mod tests {
+ 
+     #[test]
+     fn reset_clears_state() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -754,14 +867,14 @@ mod tests {
+ 
+     #[test]
+     fn motion_on_unknown_slot_ignored() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         let ev = tracker.touch_motion(slot(99), pt(0.0, 0.0), ts(10));
+         assert!(ev.is_none());
+     }
+ 
+     #[test]
+     fn four_fingers_down_before_recognition() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(110.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(120.0, 100.0), ts(0));
+@@ -783,7 +896,7 @@ mod tests {
+ 
+     #[test]
+     fn begin_delta_reflects_cumulative_movement() {
+-        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS);
++        let mut tracker = TouchSwipeGestureTracker::new(DEFAULT_MIN_FINGERS, false);
+         tracker.touch_down(slot(0), pt(100.0, 100.0), ts(0));
+         tracker.touch_down(slot(1), pt(200.0, 100.0), ts(0));
+         tracker.touch_down(slot(2), pt(300.0, 100.0), ts(0));
+diff --git a/src/niri.rs b/src/niri.rs
+index 1db3283c..6dc14a58 100644
+--- a/src/niri.rs
++++ b/src/niri.rs
+@@ -2596,6 +2596,7 @@ impl Niri {
+             gesture_swipe_3f_cumulative: None,
+             touch_swipe_tracker: crate::input::touch_swipe_tracker::TouchSwipeGestureTracker::new(
+                 3,
++                false,
+             ),
+             touch_edge_swipe_tracker: crate::input::touch_edge_swipe::EdgeSwipeTracker::default(),
+             pending_touch_action: None,
+-- 
+2.55.0
+
