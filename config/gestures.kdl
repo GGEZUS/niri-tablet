@@ -25,6 +25,12 @@ gestures {
         // horizontally, workspace carousel vertically).
         fingers 3
 
+        // What a quick horizontal swipe does. Default "move-view" scrolls the
+        // view across columns (animated). "resize-column" instead resizes the
+        // focused window's width, tracking the fingers 1:1: swipe right to
+        // widen, left to narrow; the width stays where you leave it.
+        horizontal-swipe "resize-column"
+
         // 3-finger tap: maximize / restore the focused column (also the default).
         tap { maximize-column; }
 

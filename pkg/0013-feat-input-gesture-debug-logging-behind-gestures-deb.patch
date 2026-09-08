@@ -1,7 +1,7 @@
 From 3244c12ac85f8a4b34a7136076ca3aee2d30ce6a Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Mon, 7 Sep 2026 20:20:11 +0100
-Subject: [PATCH 13/15] feat(input): gesture debug logging behind gestures
+Subject: [PATCH 13/18] feat(input): gesture debug logging behind gestures
  debug-log
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

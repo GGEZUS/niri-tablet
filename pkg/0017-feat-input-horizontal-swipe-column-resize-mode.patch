@@ -1,0 +1,443 @@
+From 39d05f3d2fd8951e4ac792b1098d7b639aebb858 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Tue, 8 Sep 2026 05:51:07 +0100
+Subject: [PATCH 17/18] feat(input): horizontal swipe column-resize mode
+
+New touchscreen-swipe option: horizontal-swipe "move-view" (default,
+the animated view scroll) or "resize-column". In resize mode a quick
+horizontal swipe drives the existing interactive-resize machinery on
+the focused window (the same one Mod+right-click uses): the width
+tracks the fingers 1:1 while swiping, stops when they stop, and stays
+where they were lifted. Tiled: the focused column; floating: the
+focused window. If there is nothing to resize, the swipe falls back
+to the animated view scroll.
+
+The swipe grab gains a ColumnResize state that accumulates the
+incremental centroid deltas into the cumulative delta the
+interactive-resize API expects, and ends the resize on gesture
+end/cancel/ungrab. Vertical swipes, taps, flicks and hold-swipes are
+untouched.
+---
+ niri-config/src/gestures.rs   |  30 +++++++++
+ niri-config/src/lib.rs        |  32 ++++++++-
+ src/input/mod.rs              |  53 ++++++++++++++-
+ src/input/touch_swipe_grab.rs | 121 +++++++++++++++++++++++++++++++---
+ 4 files changed, 225 insertions(+), 11 deletions(-)
+
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 14e01b59..42c3605e 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -82,6 +82,27 @@ pub enum ShowTouchPoints {
+     Gestures,
+ }
+ 
++/// What a quick horizontal touchscreen swipe does.
++///
++/// ```kdl
++/// gestures {
++///     touchscreen-swipe {
++///         horizontal-swipe "move-view"       // animated view scroll (default)
++///         horizontal-swipe "resize-column"   // resize the focused window's
++///                                           // width, tracking the fingers
++///     }
++/// }
++/// ```
++#[derive(knuffel::DecodeScalar, Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum HorizontalSwipe {
++    #[default]
++    MoveView,
++    /// The swipe tracks the focused window's width 1:1: dragging right widens
++    /// (tiled: the focused column; floating: the focused window), the width
++    /// stays where the fingers left it.
++    ResizeColumn,
++}
++
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub struct DndEdgeViewScroll {
+     pub trigger_width: f64,
+@@ -168,6 +189,9 @@ pub struct HotCorners {
+ pub struct TouchscreenSwipe {
+     pub off: bool,
+     pub fingers: u8,
++    /// What a quick horizontal swipe does: move the view (animated scroll,
++    /// default) or resize the focused window's width, tracking the fingers.
++    pub horizontal_swipe: HorizontalSwipe,
+     /// Action performed on a quick multi-finger tap: all fingers down and up
+     /// within a short window, without enough movement to become a swipe.
+     pub tap: Option<Action>,
+@@ -190,6 +214,7 @@ impl Default for TouchscreenSwipe {
+         Self {
+             off: false,
+             fingers: 3,
++            horizontal_swipe: HorizontalSwipe::default(),
+             tap: Some(Action::MaximizeColumn),
+             tap_4: None,
+             swipe_4_down: None,
+@@ -205,6 +230,8 @@ pub struct TouchscreenSwipePart {
+     pub off: bool,
+     #[knuffel(child, unwrap(argument))]
+     pub fingers: Option<u8>,
++    #[knuffel(child, unwrap(argument))]
++    pub horizontal_swipe: Option<HorizontalSwipe>,
+     #[knuffel(child)]
+     pub tap: Option<TouchscreenTap>,
+     #[knuffel(child)]
+@@ -223,6 +250,9 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+             self.off = true;
+         }
+         merge_clone!((self, part), fingers);
++        if let Some(horizontal_swipe) = part.horizontal_swipe {
++            self.horizontal_swipe = horizontal_swipe;
++        }
+         if let Some(tap) = &part.tap {
+             self.tap = Some(tap.action.clone());
+         }
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 0a87ebb0..35b8f85f 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -49,7 +49,7 @@ pub use crate::appearance::*;
+ pub use crate::binds::*;
+ pub use crate::debug::Debug;
+ pub use crate::error::{ConfigIncludeError, ConfigParseResult};
+-pub use crate::gestures::{Gestures, ShowTouchPoints, TouchscreenSwipe};
++pub use crate::gestures::{Gestures, HorizontalSwipe, ShowTouchPoints, TouchscreenSwipe};
+ pub use crate::input::{Input, ModKey, ScrollMethod, TrackLayout, WarpMouseToFocusMode, Xkb};
+ pub use crate::layer_rule::LayerRule;
+ pub use crate::layout::*;
+@@ -719,6 +719,32 @@ mod tests {
+             .unwrap()
+     }
+ 
++    #[test]
++    fn gestures_horizontal_swipe_mode() {
++        use crate::HorizontalSwipe;
++
++        let parsed = do_parse(
++            r#"
++            gestures {
++                touchscreen-swipe {
++                    horizontal-swipe "resize-column"
++                }
++            }
++            "#,
++        );
++        assert_eq!(
++            parsed.gestures.touchscreen_swipe.horizontal_swipe,
++            HorizontalSwipe::ResizeColumn
++        );
++
++        // Default: horizontal swipes move the view.
++        let parsed = Config::parse_mem("").unwrap();
++        assert_eq!(
++            parsed.gestures.touchscreen_swipe.horizontal_swipe,
++            HorizontalSwipe::MoveView
++        );
++    }
++
+     #[test]
+     fn parse() {
+         let parsed = do_parse(
+@@ -933,6 +959,9 @@ mod tests {
+                     trigger-width 10
+                     max-speed 50
+                 }
++                touchscreen-swipe {
++                    horizontal-swipe "resize-column"
++                }
+                 touchscreen-edge-swipe {
+                     bottom { toggle-overview; }
+                 }
+@@ -1736,6 +1765,7 @@ mod tests {
+                 touchscreen_swipe: TouchscreenSwipe {
+                     off: false,
+                     fingers: 3,
++                    horizontal_swipe: ResizeColumn,
+                     tap: Some(
+                         MaximizeColumn,
+                     ),
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 66c0ecba..e4c00ad7 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4603,7 +4603,58 @@ impl State {
+                                     return;
+                                 }
+ 
+-                                let grab = TouchSwipeGrab::new(start_data, output.clone(), tracker);
++                                // Column-resize mode: a horizontal swipe drives a
++                                // live interactive resize of the focused window
++                                // instead of the animated view scroll.
++                                let resize_mode = direction == SwipeDirection::Horizontal
++                                    && touchscreen_swipe.horizontal_swipe
++                                        == niri_config::HorizontalSwipe::ResizeColumn;
++
++                                if resize_mode {
++                                    let window =
++                                        self.niri.layout.focus().map(|m| m.window.clone());
++                                    if let Some(window) = window {
++                                        if self.niri.layout.interactive_resize_begin(
++                                            window.clone(),
++                                            ResizeEdge::RIGHT,
++                                        ) {
++                                            if self.niri.config.borrow().gestures.debug_log {
++                                                info!(
++                                                    "gesture-debug: column resize begin (horizontal swipe)"
++                                                );
++                                            }
++                                            let grab = TouchSwipeGrab::new_column_resize(
++                                                start_data,
++                                                output.clone(),
++                                                tracker,
++                                                window.clone(),
++                                                delta_x,
++                                            );
++                                            let serial = SERIAL_COUNTER.next_serial();
++                                            // Unset any existing implicit grab before
++                                            // setting ours.
++                                            handle.unset_grab(self);
++                                            handle.set_grab(self, grab, serial);
++                                            self.niri.layout.interactive_resize_update(
++                                                &window,
++                                                Point::from((delta_x, 0.)),
++                                            );
++                                            self.niri.queue_redraw_all();
++                                            self.niri.touch_edge_swipe_tracker.reset();
++                                            return;
++                                        }
++                                    }
++                                    // Nothing to resize (no focused window or the
++                                    // layout refused): fall back to the animated
++                                    // view-offset gesture below.
++                                }
++
++                                let grab = TouchSwipeGrab::new(
++                                    start_data,
++                                    output.clone(),
++                                    tracker,
++                                    resize_mode,
++                                );
+                                 let serial = SERIAL_COUNTER.next_serial();
+                                 // Unset any existing implicit grab before setting ours.
+                                 handle.unset_grab(self);
+diff --git a/src/input/touch_swipe_grab.rs b/src/input/touch_swipe_grab.rs
+index fc7022ac..b63cc363 100644
+--- a/src/input/touch_swipe_grab.rs
++++ b/src/input/touch_swipe_grab.rs
+@@ -1,15 +1,17 @@
+ use std::time::Duration;
+ 
++use smithay::desktop::Window;
+ use smithay::input::touch::{
+     DownEvent, GrabStartData as TouchGrabStartData, MotionEvent, OrientationEvent, ShapeEvent,
+     TouchGrab, TouchInnerHandle, UpEvent,
+ };
+ use smithay::input::SeatHandler;
+ use smithay::output::Output;
+-use smithay::utils::{Logical, Point, Serial};
++use smithay::utils::{IsAlive, Logical, Point, Serial};
+ 
+ use crate::input::touch_swipe_tracker::{GestureEvent, SwipeDirection, TouchSwipeGestureTracker};
+ use crate::niri::State;
++use crate::utils::ResizeEdge;
+ use niri_config::Action;
+ 
+ /// Gesture state for a 3-finger touchscreen swipe outside the overview.
+@@ -24,7 +26,10 @@ enum GestureState {
+     ViewOffset,
+     /// Vertical swipe — drives `workspace_switch_gesture_*`.
+     WorkspaceSwitch,
+-    /// Discrete gesture (4+-finger vertical swipe): swallow events and run the pending
++    /// Horizontal swipe in column-resize mode — drives
++    /// `Layout::interactive_resize_*` on the focused window.
++    ColumnResize,
++    /// Discrete gesture (bound quick flick): swallow events and run the pending
+     /// action when the gesture completes.
+     Discrete,
+ }
+@@ -34,6 +39,13 @@ pub struct TouchSwipeGrab {
+     output: Output,
+     tracker: TouchSwipeGestureTracker,
+     gesture: GestureState,
++    /// Whether horizontal swipes should resize the focused window's width
++    /// (`touchscreen-swipe horizontal-swipe "resize-column"`).
++    resize_mode: bool,
++    /// Window being resized in `GestureState::ColumnResize`.
++    resize_window: Option<Window>,
++    /// Cumulative horizontal delta of the resize gesture, from its start.
++    resize_dx: f64,
+     /// Action to run when a discrete gesture completes.
+     pending_action: Option<Action>,
+ }
+@@ -43,6 +55,7 @@ impl TouchSwipeGrab {
+         start_data: TouchGrabStartData<State>,
+         output: Output,
+         tracker: TouchSwipeGestureTracker,
++        resize_mode: bool,
+     ) -> Self {
+         let gesture = if tracker.is_active() {
+             match tracker.direction() {
+@@ -58,6 +71,32 @@ impl TouchSwipeGrab {
+             output,
+             tracker,
+             gesture,
++            resize_mode,
++            resize_window: None,
++            resize_dx: 0.,
++            pending_action: None,
++        }
++    }
++
++    /// A horizontal swipe in column-resize mode: the caller has already begun
++    /// the interactive resize and applied `initial_delta_x`; the grab feeds
++    /// the remaining (incremental) deltas into `Layout::interactive_resize_*`
++    /// and ends the resize when the gesture completes.
++    pub fn new_column_resize(
++        start_data: TouchGrabStartData<State>,
++        output: Output,
++        tracker: TouchSwipeGestureTracker,
++        window: Window,
++        initial_delta_x: f64,
++    ) -> Self {
++        Self {
++            start_data,
++            output,
++            tracker,
++            gesture: GestureState::ColumnResize,
++            resize_mode: true,
++            resize_window: Some(window),
++            resize_dx: initial_delta_x,
+             pending_action: None,
+         }
+     }
+@@ -75,6 +114,9 @@ impl TouchSwipeGrab {
+             output,
+             tracker,
+             gesture: GestureState::Discrete,
++            resize_mode: false,
++            resize_window: None,
++            resize_dx: 0.,
+             pending_action: Some(action),
+         }
+     }
+@@ -103,13 +145,20 @@ impl TouchSwipeGrab {
+             } => {
+                 match direction {
+                     SwipeDirection::Horizontal => {
+-                        data.niri
+-                            .layout
+-                            .view_offset_gesture_begin(&self.output, None, false);
+-                        self.gesture = GestureState::ViewOffset;
+-                        data.niri
+-                            .layout
+-                            .view_offset_gesture_update(-delta_x, timestamp, false);
++                        let mut began_resize = false;
++                        if self.resize_mode {
++                            began_resize = self.begin_column_resize(data, delta_x);
++                        }
++
++                        if !began_resize {
++                            data.niri
++                                .layout
++                                .view_offset_gesture_begin(&self.output, None, false);
++                            self.gesture = GestureState::ViewOffset;
++                            data.niri
++                                .layout
++                                .view_offset_gesture_update(-delta_x, timestamp, false);
++                        }
+                     }
+                     SwipeDirection::Vertical => {
+                         data.niri
+@@ -140,6 +189,18 @@ impl TouchSwipeGrab {
+                         .layout
+                         .workspace_switch_gesture_update(-delta_y, timestamp, false)
+                         .is_some(),
++                    GestureState::ColumnResize => {
++                        let Some(window) = self.resize_window.as_ref().filter(|w| w.alive())
++                        else {
++                            // The window went away; stop the gesture.
++                            return true;
++                        };
++                        self.resize_dx += delta_x;
++                        data.niri.layout.interactive_resize_update(
++                            window,
++                            Point::from((self.resize_dx, 0.)),
++                        )
++                    }
+                 };
+ 
+                 if ongoing {
+@@ -166,6 +227,11 @@ impl TouchSwipeGrab {
+                     GestureState::WorkspaceSwitch => {
+                         data.niri.layout.workspace_switch_gesture_end(Some(false));
+                     }
++                    GestureState::ColumnResize => {
++                        if let Some(window) = self.resize_window.as_ref().filter(|w| w.alive()) {
++                            data.niri.layout.interactive_resize_end(window);
++                        }
++                    }
+                 }
+                 data.niri.queue_redraw_all();
+                 return true;
+@@ -182,6 +248,11 @@ impl TouchSwipeGrab {
+                     GestureState::WorkspaceSwitch => {
+                         data.niri.layout.workspace_switch_gesture_end(None);
+                     }
++                    GestureState::ColumnResize => {
++                        if let Some(window) = self.resize_window.as_ref().filter(|w| w.alive()) {
++                            data.niri.layout.interactive_resize_end(window);
++                        }
++                    }
+                 }
+                 data.niri.queue_redraw_all();
+                 return true;
+@@ -191,6 +262,33 @@ impl TouchSwipeGrab {
+         false
+     }
+ 
++    /// Begin a live column resize on the focused window, applying the gesture's
++    /// cumulative `delta_x` so far. Returns false when there is nothing to
++    /// resize (no focused window, or the layout refused); the caller then
++    /// falls back to the animated view-offset gesture.
++    fn begin_column_resize(&mut self, data: &mut State, delta_x: f64) -> bool {
++        let Some(window) = data.niri.layout.focus().map(|m| m.window.clone()) else {
++            return false;
++        };
++
++        if !data
++            .niri
++            .layout
++            .interactive_resize_begin(window.clone(), ResizeEdge::RIGHT)
++        {
++            return false;
++        }
++
++        self.gesture = GestureState::ColumnResize;
++        self.resize_window = Some(window.clone());
++        self.resize_dx = delta_x;
++        data.niri
++            .layout
++            .interactive_resize_update(&window, Point::from((delta_x, 0.)));
++
++        true
++    }
++
+     fn on_ungrab(&mut self, data: &mut State) {
+         match self.gesture {
+             GestureState::Recognizing | GestureState::Discrete => {}
+@@ -200,6 +298,11 @@ impl TouchSwipeGrab {
+             GestureState::WorkspaceSwitch => {
+                 data.niri.layout.workspace_switch_gesture_end(Some(false));
+             }
++            GestureState::ColumnResize => {
++                if let Some(window) = self.resize_window.as_ref().filter(|w| w.alive()) {
++                    data.niri.layout.interactive_resize_end(window);
++                }
++            }
+         }
+         data.niri.queue_redraw_all();
+     }
+-- 
+2.55.0
+

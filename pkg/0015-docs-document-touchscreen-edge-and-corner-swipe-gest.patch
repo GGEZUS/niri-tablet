@@ -1,7 +1,7 @@
 From 2843d174bea29fc799180658d8e6eb30fa73485e Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Mon, 7 Sep 2026 23:17:41 +0100
-Subject: [PATCH 15/15] docs: document touchscreen edge and corner swipe
+Subject: [PATCH 15/18] docs: document touchscreen edge and corner swipe
  gestures
 
 Add touchscreen-edge-swipe and touchscreen-corner-swipe sections to the

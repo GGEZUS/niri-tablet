@@ -1,0 +1,102 @@
+From 817e59140ebbad84e873ffbc8c6f6edaf3bae282 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Tue, 8 Sep 2026 05:51:12 +0100
+Subject: [PATCH 18/18] docs: document the touchscreen-swipe action options
+
+Document the full touchscreen-swipe node set (previously only fingers
+and off were listed): tap, tap-4, swipe-4-down/up, hold, and the new
+horizontal-swipe mode, with their fallback rules. Add a Column Resize
+entry to the gesture overview.
+---
+ docs/wiki/Configuration:-Gestures.md | 42 ++++++++++++++++++++++++++++
+ docs/wiki/Gestures.md                | 10 +++++++
+ 2 files changed, 52 insertions(+)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 0d298feb..7c6f067c 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -32,6 +32,15 @@ gestures {
+     touchscreen-swipe {
+         fingers 3
+         // off
++        // horizontal-swipe "resize-column"
++        // tap { maximize-column; }
++        // tap-4 { toggle-overview; }
++        // swipe-4-down { close-window; }
++        // swipe-4-up { spawn-sh "on-screen-keyboard"; }
++        // hold {
++        //     left { move-column-left; }
++        //     right { move-column-right; }
++        // }
+     }
+ 
+     // touchscreen-edge-swipe {
+@@ -143,10 +152,43 @@ Three-finger swipe gestures on a touchscreen, replicating the touchpad behavior:
+ 
+ The gesture uses the same continuous animation and inertia as the touchpad swipe.
+ 
++On top of the animated swipes, discrete actions can be bound to taps and specific
++swipe shapes, and the horizontal swipe can be switched to resize the focused
++window. Anything left unbound falls back to the animated gesture (or, for taps
++with four or more fingers, to the regular `tap` action).
++
+ The options are:
+ 
+ - `fingers`: number of fingers required to trigger the gesture (default: 3).
+ - `off`: disable touchscreen swipe gestures entirely.
++- `horizontal-swipe`: what a quick horizontal swipe does (default:
++  `"move-view"`). `"resize-column"` makes the swipe resize the focused
++  window's width, tracking the fingers 1:1: dragging right widens it, dragging
++  left narrows it, and the width stays where the fingers leave it. Tiled: the
++  focused column; floating: the focused window. Without a focused window the
++  swipe falls back to moving the view.
++- `tap`: action for a quick tap with `fingers` fingers (default:
++  `maximize-column`). All fingers down and up within a short window, without
++  enough movement to become a swipe.
++- `tap-4`: action for taps involving four or more fingers; overrides `tap` for
++  those.
++- `swipe-4-down` / `swipe-4-up`: discrete action for a quick vertical swipe
++  with four or more fingers. Unset, such swipes drive the workspace carousel.
++- `hold { left/right/up/down { ... } }`: discrete actions for held swipes:
++  fingers resting still for a moment (~400ms) before swiping. A direction left
++  unset falls back to the animated swipe.
++
++```kdl
++gestures {
++    touchscreen-swipe {
++        // Example: horizontal swipes resize the focused window, a 4-finger
++        // tap opens the overview, a 4-finger flick down closes the window.
++        horizontal-swipe "resize-column"
++        tap-4 { toggle-overview; }
++        swipe-4-down { close-window; }
++    }
++}
++```
+ 
+ ```kdl
+ gestures {
+diff --git a/docs/wiki/Gestures.md b/docs/wiki/Gestures.md
+index 4655a856..c3475eab 100644
+--- a/docs/wiki/Gestures.md
++++ b/docs/wiki/Gestures.md
+@@ -77,6 +77,16 @@ The gesture uses the same continuous carousel animation as the touchpad.
+ 
+ Move the view horizontally with three-finger horizontal swipes on the touchscreen.
+ 
++#### Column Resize
++
++<sup>Since: 26.04</sup>
++
++With `touchscreen-swipe { horizontal-swipe "resize-column" }`, horizontal
++swipes resize the focused window's width instead of moving the view: the width
++tracks the fingers 1:1 while swiping and stays where they leave it.
++
++See [`touchscreen-swipe`](./Configuration:-Gestures.md#touchscreen-swipe).
++
+ #### Edge Swipes
+ 
+ <sup>Since: 26.04</sup>
+-- 
+2.55.0
+

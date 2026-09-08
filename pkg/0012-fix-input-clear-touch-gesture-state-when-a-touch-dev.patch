@@ -1,7 +1,7 @@
 From 2e96de3093ee6d33b8fa3118cc8d986ca70829c0 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Sun, 6 Sep 2026 18:53:35 +0100
-Subject: [PATCH 12/15] fix(input): clear touch gesture state when a touch
+Subject: [PATCH 12/18] fix(input): clear touch gesture state when a touch
  device is removed
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,0 +1,38 @@
+From 543d083c515a4f5fc8a2dbd44c75f5978be488b5 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Tue, 8 Sep 2026 05:39:29 +0100
+Subject: [PATCH 16/18] fix(test): edge-swipe test helper rectangle
+ construction
+
+The geom() helper built its Rectangle from bare (x, y) / (w, h) tuples,
+which fail to coerce in the test profile build; make the conversion
+explicit with Point::from / Size::from. The lib itself compiled fine,
+so this only bit cargo test.
+---
+ src/input/touch_edge_swipe.rs | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/input/touch_edge_swipe.rs b/src/input/touch_edge_swipe.rs
+index 394eae3b..a69ead2c 100644
+--- a/src/input/touch_edge_swipe.rs
++++ b/src/input/touch_edge_swipe.rs
+@@ -262,6 +262,7 @@ impl TouchGrab<State> for EdgeSwipeGrab {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use smithay::utils::Size;
+ 
+     fn slot(id: u32) -> TouchSlot {
+         TouchSlot::from(Some(id))
+@@ -272,7 +273,7 @@ mod tests {
+     }
+ 
+     fn geom(x: f64, y: f64, w: f64, h: f64) -> Rectangle<f64, Logical> {
+-        Rectangle::new((x, y), (w, h))
++        Rectangle::new(Point::from((x, y)), Size::from((w, h)))
+     }
+ 
+     #[test]
+-- 
+2.55.0
+

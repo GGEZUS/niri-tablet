@@ -1,7 +1,7 @@
 From a38d4054233d7092c0f39b3ba1435eefd11ca86d Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Mon, 7 Sep 2026 23:17:11 +0100
-Subject: [PATCH 14/15] feat(input): single-finger edge and corner swipe
+Subject: [PATCH 14/18] feat(input): single-finger edge and corner swipe
  gestures
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
