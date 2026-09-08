@@ -63,21 +63,23 @@ gestures {
     // short drags in the strips still reach the shell/bar; the gesture only
     // takes the touch once it triggers. Don't bind an edge occupied by a
     // swipe-driven panel (e.g. a top notification pull-down).
-    // touchscreen-edge-swipe {
-    //     bottom { spawn-sh "noctalia msg panel-toggle launcher"; }
-    //     top { spawn-sh "…"; }
-    //     left { focus-column-left; }
-    //     right { focus-column-right; }
-    // }
+    // These four are the tested starting point; unbind by deleting a line.
+    touchscreen-edge-swipe {
+        bottom { spawn-sh "~/.local/bin/niri-osk.sh"; }  // one-finger OSK, like 4-finger flick up
+        top { toggle-overview; }
+        left { focus-column-left; }
+        right { focus-column-right; }
+    }
 
     // Corner swipes — single finger starting in the ~48px corner square,
     // moving diagonally inward >20px on both axes. Mostly-straight swipes
     // near a corner fire nothing, so the edges stay usable up to it.
+    // Left unbound in the starting point; uncomment to bind a corner.
     // touchscreen-corner-swipe {
-    //     top-left { …; }
-    //     top-right { …; }
-    //     bottom-left { …; }
-    //     bottom-right { …; }
+    //     top-left { maximize-column; }
+    //     top-right { toggle-overview; }
+    //     bottom-left { spawn "foot"; }
+    //     bottom-right { close-window; }
     // }
 }
 
