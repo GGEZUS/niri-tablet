@@ -15,24 +15,27 @@ the keyboard detached.
 
 ## Gestures
 
-| Gesture | Action |
-|---|---|
-| 3-finger drag, horizontal | scroll the view across columns (animated) |
-| 3-finger drag, vertical | workspace carousel (animated) |
-| 3-finger tap | maximize / restore the focused column |
-| 3-finger hold + swipe | move the focused window: left/right a column, up/down a workspace |
-| 4-finger tap | window overview (built-in; any launcher binds in its place) |
-| 4-finger flick down | close the focused window |
-| 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) |
-| 1-finger swipe inward from a screen edge | configurable per edge (e.g. launcher from the bottom) |
-| 1-finger diagonal swipe from a corner | configurable per corner |
+| Gesture | Action | Default? |
+|---|---|---|
+| 3-finger drag, horizontal | scroll the view across columns (animated) | yes |
+| 3-finger drag, vertical | workspace carousel (animated) | yes |
+| 3-finger tap | maximize / restore the focused column | yes |
+| 3-finger hold + swipe | move the focused window: left/right a column, up/down a workspace | needs `hold` binds |
+| 4-finger tap | window overview (built-in; any launcher binds in its place) | needs `tap-4` |
+| 4-finger flick down | close the focused window | needs `swipe-4-down` |
+| 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) | needs `swipe-4-up` |
+| 1-finger swipe inward from a screen edge | configurable per edge (e.g. launcher from the bottom) | per-edge bind |
+| 1-finger diagonal swipe from a corner | configurable per corner | per-corner bind |
 
-All actions are configurable — every node in the `gestures` block takes any
-niri action, same as keybinds. The example `config/gestures.kdl` binds 4-tap
-to the built-in `toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are
-one uncomment away. Single-finger edge and corner swipes (eight zones:
-four edges, four corners, each with its own action) are implemented and
-unbound by default. Touchpad behavior is untouched.
+Only the two animated swipes and the 3-finger tap act without binds. Without
+the bind named in the last column, a 4-finger tap runs the 3-finger tap
+action, 4-finger flicks and held swipes fall back to the animated swipe, and
+unbound edge/corner zones do nothing. The actions above are what the example
+`config/gestures.kdl` binds, so copying it into your config is the quickest
+start (4-tap goes to the built-in `toggle-overview`; Noctalia, fuzzel, wofi
+and rofi swaps are one edit away). All actions are configurable: every node
+in the `gestures` block takes any niri action, same as keybinds. Touchpad
+behavior is untouched.
 
 ### Hold-swipe: move windows
 
