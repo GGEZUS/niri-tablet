@@ -15,27 +15,36 @@ the keyboard detached.
 
 ## Gestures
 
-| Gesture | Action | Default? |
-|---|---|---|
-| 3-finger drag, horizontal | scroll the view across columns (animated), or resize the focused window's width (`horizontal-swipe "resize-column"`) | yes (mode is configurable) |
-| 3-finger drag, vertical | workspace carousel (animated) | yes |
-| 3-finger tap | maximize / restore the focused column | yes |
-| 3-finger hold + swipe | move the focused window: left/right a column, up/down a workspace | needs `hold` binds |
-| 4-finger tap | window overview (built-in; any launcher binds in its place) | needs `tap-4` |
-| 4-finger flick down | close the focused window | needs `swipe-4-down` |
-| 4-finger flick up | toggle the on-screen keyboard (needs the OSK script) | needs `swipe-4-up` |
-| 1-finger swipe inward from a screen edge | per-edge action (example: OSK from the bottom, overview from the top, focus left/right) | per-edge bind |
-| 1-finger diagonal swipe from a corner | any action per corner | per-corner bind |
+The table is the shipped default: `config/gestures.kdl` is the config this
+scheme is developed and daily-driven on, so copying it in gives you exactly
+what's below. Nothing is locked in: every node in the `gestures` block takes
+any niri action, same as keybinds. Change the file as you see fit.
 
-Only the two animated swipes and the 3-finger tap act without binds. Without
-the bind named in the last column, a 4-finger tap runs the 3-finger tap
-action, 4-finger flicks and held swipes fall back to the animated swipe, and
-unbound edge/corner zones do nothing. The example `config/gestures.kdl`
-binds everything above except the corners (those stay yours to pick), so
-copying it into your config is the quickest start (4-tap goes to the built-in
-`toggle-overview`; Noctalia, fuzzel, wofi and rofi swaps are one edit away).
-All actions are configurable: every node in the `gestures` block takes any
-niri action, same as keybinds. Touchpad behavior is untouched.
+| Gesture | Action (as shipped) |
+|---|---|
+| **3-finger swipes** | |
+| horizontal drag | resize the focused window's width, live, tracking your fingers 1:1 (set `horizontal-swipe "move-view"` to scroll the view instead) |
+| vertical drag | workspace carousel (animated) |
+| tap | maximize / restore the focused column |
+| **3-finger hold + swipe** | |
+| rest ~400ms, then swipe left/right | move the focused window one column left/right |
+| rest ~400ms, then swipe up/down | move the focused window one workspace up/down |
+| **4-finger swipes** | |
+| tap | window overview (niri's own, works with zero setup); prefer an app launcher? Noctalia, fuzzel, wofi and rofi lines sit commented in the config, ready to swap in |
+| flick down | close the focused window |
+| flick up | toggle the on-screen keyboard (`scripts/niri-osk.sh`) |
+| **Edge swipes** | |
+| one finger, swiping up from the bottom edge | toggle the on-screen keyboard |
+| one finger, swiping down from the top edge | toggle the overview |
+| one finger, swiping inward from the left edge | focus the column to the left |
+| one finger, swiping inward from the right edge | focus the column to the right |
+| **Corner swipes** | |
+| one finger, swiping diagonally from a corner | unbound on purpose: pick your own (examples commented in the config) |
+
+Two footnotes. With no `gestures {}` config at all, only the two animated
+swipes and the 3-finger tap do anything (the compiled defaults); everything
+else above comes from the config file, which is the point of shipping it.
+And touchpad behavior is untouched.
 
 ### Hold-swipe: move windows
 
@@ -111,8 +120,8 @@ maintains a small patch series on top of a current niri release:
   reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
   flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
   client-side so apps don't react to them), single-finger edge and corner
-  swipes (8 zones, any action), an opt-in horizontal-swipe mode that resizes
-  the focused window's width live, touch
+  swipes (8 zones, any action), a horizontal-swipe mode that resizes the
+  focused window's width live (on by default in the shipped config), touch
   point visualization, clean recovery when a touch device disappears
   mid-gesture (hotplug/unplug no longer wedges the session), and opt-in
   gesture event logging for bug reports. The animated

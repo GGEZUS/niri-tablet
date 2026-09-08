@@ -1,8 +1,10 @@
 // Touchscreen gestures for the niri-tablet patchset.
 //
 // Include from your main config:   include "~/.config/niri/cfg/gestures.kdl"
-// (or paste the gestures block straight into config.kdl). Every action node
-// takes any niri action, same as keybinds.
+// (or paste the gestures block straight into config.kdl). This is the
+// scheme the project ships and its author runs daily; treat it as the
+// default and edit it as you see fit. Every action node takes any niri
+// action, same as keybinds.
 gestures {
     // Dots that follow the fingers on screen (demos, debugging).
     // "gestures": only while a multi-finger gesture is down. "all": every
@@ -27,9 +29,16 @@ gestures {
 
         // The discrete gestures (taps, flicks) fire once, on finger lift.
         tap          { maximize-column; }                      // maximize / restore
-        tap-4        { toggle-overview; }                      // any launcher works here
+        tap-4        { toggle-overview; }                      // niri's own overview
         swipe-4-down { close-window; }
         swipe-4-up   { spawn-sh "~/.local/bin/niri-osk.sh"; }  // OSK toggle: scripts/niri-osk.sh
+
+        // Prefer an app launcher on the 4-tap? Comment out the toggle-overview
+        // line above and uncomment ONE of these (or write your own spawn):
+        // tap-4 { spawn-sh "noctalia msg panel-toggle launcher"; }  // Noctalia
+        // tap-4 { spawn "fuzzel"; }                                  // fuzzel
+        // tap-4 { spawn "wofi" "--show" "drun"; }                    // wofi
+        // tap-4 { spawn "rofi" "-show" "drun"; }                     // rofi
 
         // Press, hold ~400ms, then swipe: moves the focused window (left or
         // right a column, up or down a workspace) instead of the animated
@@ -65,11 +74,15 @@ gestures {
 }
 
 // Using wvkbd as the OSK with a non-US system layout? A two-group xkb layout
-// lets the OSK type US while the physical keyboard stays native; niri-osk.sh
-// flips the active group on toggle:
+// lets the OSK type US while the physical keyboard stays native, and
+// niri-osk.sh flips the active group on toggle. This belongs in your INPUT
+// config (config.kdl or its input include), not in this file - and the
+// layout node lives under xkb:
 //
 //     input {
 //         keyboard {
-//             layout "pt,us"   // your layout first, us second
+//             xkb {
+//                 layout "pt,us"   // your layout first, us second
+//             }
 //         }
 //     }
