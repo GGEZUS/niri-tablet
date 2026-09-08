@@ -1,61 +1,39 @@
 // Touchscreen gestures for the niri-tablet patchset.
 //
-// Include from your main config (config.kdl):
-//     include "~/.config/niri/cfg/gestures.kdl"
-// or paste the block straight in. Every node takes any niri action, same as
-// keybinds — the ones below are a sensible starting point (the compiled
-// defaults are tamer: 3-tap maximize, the rest unbound).
+// Include from your main config:   include "~/.config/niri/cfg/gestures.kdl"
+// (or paste the gestures block straight into config.kdl). Every action node
+// takes any niri action, same as keybinds.
 gestures {
-    // Touch point visualization (demo videos, gesture debugging): translucent
-    // dots follow the fingers, rendered by the compositor — any screen
-    // recorder captures them, input is never touched. Off unless configured.
-    //   "gestures"  dots only while 3+/4-finger gesture touches are down
-    //   "all"       every finger (debugging)
-    show-touch-points "gestures";
+    // Dots that follow the fingers on screen (demos, debugging).
+    // "gestures": only while a multi-finger gesture is down. "all": every
+    // finger. Remove the line to disable.
+    show-touch-points "gestures"
 
-    // Gesture debug logging (bug reports): every finger down/up/motion with
-    // timestamps, recognition decisions and dispatched actions, at info level
-    // with a "gesture-debug:" prefix. Collect with:
-    //   journalctl --user -u niri.service --since -10m | grep gesture-debug
-    // Can be toggled live; takes effect from the next touch. Off by default.
+    // Per-event gesture logging for bug reports ("gesture-debug:" lines,
+    // info level, applies live from the next touch). Uncomment to enable.
     // debug-log
 
+    // Multi-finger gestures: the two animated drags, taps, flicks, hold-swipes.
     touchscreen-swipe {
-        // Minimum fingers for the animated swipes (drag = view scroll
-        // horizontally, workspace carousel vertically).
+        // Minimum finger count for everything in this block that has no
+        // number in its name (the drags and `tap`). The *-4 nodes below
+        // override their gesture for 4+ fingers.
         fingers 3
 
-        // What a quick horizontal swipe does. Default "move-view" scrolls the
-        // view across columns (animated). "resize-column" instead resizes the
-        // focused window's width, tracking the fingers 1:1: swipe right to
-        // widen, left to narrow; the width stays where you leave it.
+        // What the horizontal drag does: "resize-column" widens/narrows the
+        // focused window, tracking the fingers 1:1; the default "move-view"
+        // scrolls the view across columns instead.
         horizontal-swipe "resize-column"
 
-        // 3-finger tap: maximize / restore the focused column (also the default).
-        tap { maximize-column; }
-
-        // 4-finger tap: window overview — niri-native, works everywhere.
-        // Prefer an app launcher? Swap in one of these (any spawn works):
-        //   Noctalia: spawn-sh "noctalia msg panel-toggle launcher"
-        //   fuzzel:   spawn "fuzzel"
-        //   wofi:     spawn "wofi" "--show" "drun"
-        //   rofi:     spawn "rofi" "-show" "drun"
-        // Or remove the node — unbound is the compiled default.
-        tap-4 { toggle-overview; }
-
-        // 4-finger flick down: close the focused window (discrete, fires on lift).
+        // The discrete gestures (taps, flicks) fire once, on finger lift.
+        tap          { maximize-column; }                      // maximize / restore
+        tap-4        { toggle-overview; }                      // any launcher works here
         swipe-4-down { close-window; }
+        swipe-4-up   { spawn-sh "~/.local/bin/niri-osk.sh"; }  // OSK toggle: scripts/niri-osk.sh
 
-        // 4-finger flick up: toggle the on-screen keyboard
-        // (scripts/niri-osk.sh from this repo, at ~/.local/bin/niri-osk.sh).
-        swipe-4-up { spawn-sh "~/.local/bin/niri-osk.sh"; }
-
-        // Hold-swipe: press, rest the fingers still for a moment (~400ms),
-        // then swipe — the dominant direction runs its action. Quick swipes
-        // are unaffected (they keep driving the animated view/carousel);
-        // unset a direction and held swipes that way fall back to animated.
-        // Below: held swipe moves the focused window left/right one column
-        // or up/down one workspace — any action can be bound instead.
+        // Press, hold ~400ms, then swipe: moves the focused window (left or
+        // right a column, up or down a workspace) instead of the animated
+        // drag. Quick swipes never trigger it.
         hold {
             left { move-column-left; }
             right { move-column-right; }
@@ -64,23 +42,20 @@ gestures {
         }
     }
 
-    // Edge swipes — single finger starting within ~48px of a screen edge,
-    // moving inward >40px (per-edge binding, any action). Plain taps and
-    // short drags in the strips still reach the shell/bar; the gesture only
-    // takes the touch once it triggers. Don't bind an edge occupied by a
-    // swipe-driven panel (e.g. a top notification pull-down).
-    // These four are the tested starting point; unbind by deleting a line.
+    // One finger swiping inward from a screen edge. Taps and short drags in
+    // the strip still reach apps. Don't bind an edge covered by a
+    // swipe-driven panel (e.g. a notification pull-down): it would fire
+    // mid-drag.
     touchscreen-edge-swipe {
-        bottom { spawn-sh "~/.local/bin/niri-osk.sh"; }  // one-finger OSK, like 4-finger flick up
+        bottom { spawn-sh "~/.local/bin/niri-osk.sh"; }
         top { toggle-overview; }
         left { focus-column-left; }
         right { focus-column-right; }
     }
 
-    // Corner swipes — single finger starting in the ~48px corner square,
-    // moving diagonally inward >20px on both axes. Mostly-straight swipes
-    // near a corner fire nothing, so the edges stay usable up to it.
-    // Left unbound in the starting point; uncomment to bind a corner.
+    // One finger swiping diagonally inward from a corner. Mostly straight
+    // swipes near a corner do nothing on purpose, so the edges stay usable.
+    // Unbound by default: uncomment to bind a corner.
     // touchscreen-corner-swipe {
     //     top-left { maximize-column; }
     //     top-right { toggle-overview; }
@@ -90,8 +65,8 @@ gestures {
 }
 
 // Using wvkbd as the OSK with a non-US system layout? A two-group xkb layout
-// lets the OSK type US while the physical keyboard stays native — and
-// niri-osk.sh flips the active group on toggle:
+// lets the OSK type US while the physical keyboard stays native; niri-osk.sh
+// flips the active group on toggle:
 //
 //     input {
 //         keyboard {
