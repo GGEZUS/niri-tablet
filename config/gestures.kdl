@@ -31,7 +31,7 @@ gestures {
         tap          { maximize-column; }                      // maximize / restore
         tap-4        { toggle-overview; }                      // niri's own overview
         swipe-4-down { close-window; }
-        swipe-4-up   { spawn-sh "~/.local/bin/niri-osk.sh"; }  // OSK toggle: scripts/niri-osk.sh
+        swipe-4-up   { fullscreen-window; }                     // fullscreen on/off
 
         // Prefer an app launcher on the 4-tap? Comment out the toggle-overview
         // line above and uncomment ONE of these (or write your own spawn):

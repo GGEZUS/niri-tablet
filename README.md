@@ -32,7 +32,7 @@ any niri action, same as keybinds. Change the file as you see fit.
 | **4-finger swipes** | |
 | tap | window overview (niri's own, works with zero setup); prefer an app launcher? Noctalia, fuzzel, wofi and rofi lines sit commented in the config, ready to swap in |
 | flick down | close the focused window |
-| flick up | toggle the on-screen keyboard (`scripts/niri-osk.sh`) |
+| flick up | toggle the focused window fullscreen |
 | **Edge swipes** | |
 | one finger, swiping up from the bottom edge | toggle the on-screen keyboard |
 | one finger, swiping down from the top edge | toggle the overview |
