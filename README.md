@@ -46,6 +46,14 @@ swipes and the 3-finger tap do anything (the compiled defaults); everything
 else above comes from the config file, which is the point of shipping it.
 And touchpad behavior is untouched.
 
+Prefer picking actions over editing KDL? `niri-tablet-easysetup/` in the
+repo is a small GTK app that does exactly that: it loads your current
+scheme, offers installed apps and niri actions for every gesture, fires
+test runs through `niri msg`, and saves only what `niri validate`
+accepts (the running compositor confirms the reload). Build with
+`cargo build --release`; details in the
+[EasySetup wiki page](https://github.com/GGEZUS/niri-tablet/wiki/EasySetup).
+
 ### Hold-swipe: move windows
 
 Rest three (or more) fingers still for a moment (~400ms), then swipe: instead
@@ -289,6 +297,7 @@ update-niri-tablet.sh   user-facing updater (install/update/pin)
 scripts/   OSK toggle + auto-rotate helpers
 config/    example niri config fragments
 extras/    optional extras (wvkbd build with mobile layouts)
+niri-tablet-easysetup/   GUI gesture configurator (GTK4)
 test.kdl   minimal config for nested (in-window) testing
 niri/      maintainer's dev clone for rebasing — not part of the repo
 ```
