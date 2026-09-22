@@ -66,7 +66,7 @@ fn run_check() {
         discovery::Source::Inline(p) => println!("gestures: inline in {}", p.display()),
         discovery::Source::None => println!("gestures: not configured anywhere (first run)"),
     }
-    for w in &loaded.warnings {
+    for w in loaded.warnings.iter().chain(&loaded.model.warnings) {
         println!("warning: {w}");
     }
     for n in loaded.discovery.notices() {
