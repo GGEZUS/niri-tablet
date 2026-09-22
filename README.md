@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2018%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2019%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 [![Stars](https://img.shields.io/github/stars/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/stargazers)
 
@@ -243,10 +243,12 @@ One command, from anywhere inside the clone:
 
 It fetches the latest release tag, shows the changelog since your installed
 version, builds and installs the package, and re-checks the
-`IgnorePkg = niri` pin. Useful flags: `--check` reports without touching
-anything, `--force` rebuilds an up-to-date install, `--tag vX.Y.Z` picks a
-specific release, `--main` tracks the development branch. The manual
-equivalent:
+`IgnorePkg = niri` pin. After v26.04.19 it also checks your config for the
+renamed gesture nodes and offers to migrate them (dated backups; undone
+unless `niri validate` passes). Useful flags: `--check` reports without
+touching anything, `--force` rebuilds an up-to-date install,
+`--tag vX.Y.Z` picks a specific release, `--main` tracks the development
+branch. The manual equivalent:
 
 ```bash
 git pull
@@ -310,7 +312,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 18 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 19 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.
