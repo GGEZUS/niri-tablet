@@ -22,11 +22,10 @@ pub struct Ui {
     pub apply_btn: gtk::Button,
     pub title: adw::WindowTitle,
     pub toasts: adw::ToastOverlay,
-    /// The two multi-finger groups; titles/descriptions track the finger count.
+    /// The two multi-finger groups; titles/descriptions track the finger count
+    /// (the second group is always one finger more than the first).
     pub base_group: adw::PreferencesGroup,
-    pub four_group: adw::PreferencesGroup,
-    /// "Fallback" badge on the base group's Tap row (shown at finger count 4+).
-    pub tap_badge: gtk::Label,
+    pub more_group: adw::PreferencesGroup,
 }
 
 pub type SharedUi = Rc<Ui>;
@@ -116,8 +115,7 @@ pub fn build(app: &adw::Application) {
         title,
         toasts,
         base_group: groups.base.expect("base group built"),
-        four_group: groups.four.expect("four group built"),
-        tap_badge: groups.tap_badge.expect("tap badge built"),
+        more_group: groups.more.expect("more group built"),
     });
     // Wire row interactions now that the shared Ui exists.
     let slots: Vec<Slot> = ui.rows.keys().copied().collect();
@@ -226,23 +224,17 @@ pub fn refresh(state: &SharedState, ui: &SharedUi) {
         ui.revealer.set_reveal_child(dirty);
         ui.apply_btn.set_sensitive(dirty);
         // The multi-finger groups are named after the finger count so the
-        // labels never lie: with `fingers 4` the base binds only act as
-        // fallbacks (niri prefers tap-4/swipe-4-* for every count >= 4).
+        // labels never lie: the second tier always sits at one finger more
+        // than `fingers` (niri dispatches tap-more/swipe-more-* there).
         let n = s.model.options.fingers.unwrap_or(3);
         ui.base_group.set_title(&format!("{n}-finger gestures"));
-        ui.base_group.set_description(Some(if n >= 4 {
-            "Only the drags and hold-swipes act on their own here; the tap is a fallback for the group below"
-        } else if n == 2 {
-            "Two or three fingers: the animated drags, tap and hold-swipes"
-        } else {
-            "Tap, hold-swipes, and the two animated drags"
-        }));
-        ui.four_group.set_description(Some(&if n >= 4 {
-            "Taps and flicks at this finger count are configured here".to_string()
-        } else {
-            format!("Tap and vertical flicks with four or more fingers; they take priority over the {n}-finger tap above")
-        }));
-        ui.tap_badge.set_visible(n >= 4);
+        ui.base_group.set_description(Some(
+            "Tap, hold-swipes, and the two animated drags",
+        ));
+        ui.more_group.set_title(&format!("{}-finger gestures", n + 1));
+        ui.more_group.set_description(Some(&format!(
+            "Tap and vertical flicks at one finger more than the base; they take priority over the {n}-finger tap. Leave a bind unset to fall back to the {n}-finger tap or the vertical drag"
+        )));
         let subtitle = match &s.discovery.source {
             Source::ManagedFile(p) | Source::ManagedFileAmbiguous(p, _) => p.display().to_string(),
             Source::Inline(p) => format!("inline in {}", p.display()),
@@ -594,8 +586,7 @@ fn wire_options(state: &SharedState, ui: &SharedUi, controls: &OptionControls) {
 #[derive(Default)]
 struct GroupHandles {
     base: Option<adw::PreferencesGroup>,
-    four: Option<adw::PreferencesGroup>,
-    tap_badge: Option<gtk::Label>,
+    more: Option<adw::PreferencesGroup>,
 }
 
 fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut HashMap<Slot, (adw::ActionRow, gtk::Label, gtk::Button)>, controls: &mut OptionControls, groups: &mut GroupHandles) {
@@ -603,9 +594,9 @@ fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut Hash
     fn row_title(slot: Slot) -> &'static str {
         match slot {
             Slot::Tap => "Tap",
-            Slot::Tap4 => "Tap",
-            Slot::Swipe4Up => "Flick up",
-            Slot::Swipe4Down => "Flick down",
+            Slot::TapMore => "Tap",
+            Slot::SwipeMoreUp => "Flick up",
+            Slot::SwipeMoreDown => "Flick down",
             other => other.friendly_name(),
         }
     }
@@ -615,19 +606,17 @@ fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut Hash
     let g3 = adw::PreferencesGroup::new();
     content.append(&g3);
 
-    // Base finger count (defines what the group above is called).
+    // Base finger count (defines what the two groups above are called).
     let fingers = adw::ComboRow::builder()
         .title("Finger count")
-        .subtitle("Gestures start at this many fingers (default 3)")
+        .subtitle("Gestures start at this many fingers (3 or 4; default 3)")
         .build();
-    let flist = gtk::StringList::new(&["2", "3", "4", "5"]);
+    let flist = gtk::StringList::new(&["3", "4"]);
     fingers.set_model(Some(&flist));
-    let current = state.borrow().model.options.fingers.unwrap_or(3).to_string();
-    for i in 0..flist.n_items() {
-        if flist.string(i).as_deref() == Some(current.as_str()) {
-            fingers.set_selected(i);
-        }
-    }
+    // The parser resets out-of-range values to the default, but be defensive:
+    // anything but 4 selects 3.
+    let current = state.borrow().model.options.fingers.unwrap_or(3);
+    fingers.set_selected(u32::from(current == 4));
     g3.add(&fingers);
     controls.fingers = Some(fingers);
 
@@ -657,31 +646,21 @@ fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut Hash
 
     for slot in [Slot::Tap, Slot::HoldLeft, Slot::HoldRight, Slot::HoldUp, Slot::HoldDown] {
         let (row, summary, test_btn) = gesture_row(slot, row_title(slot));
-        if slot == Slot::Tap {
-            // At finger count 4+ niri dispatches tap-4 instead; this tap only
-            // fires as its fallback. refresh() toggles the badge.
-            let badge = gtk::Label::new(Some("Fallback"));
-            badge.add_css_class("dim-label");
-            badge.set_visible(false);
-            row.add_suffix(&badge);
-            groups.tap_badge = Some(badge);
-        }
         g3.add(&row);
         rows.insert(slot, (row, summary, test_btn));
     }
     groups.base = Some(g3);
 
-    // ---- 4-finger gestures (literal: four or more, whatever the base count).
-    // Description is set by refresh() from the current finger count.
+    // ---- The extra-finger tier: one finger more than the base count.
+    // Title/description are set by refresh() from the current count.
     let g4 = adw::PreferencesGroup::new();
-    g4.set_title("4-finger gestures");
     content.append(&g4);
-    for slot in [Slot::Tap4, Slot::Swipe4Up, Slot::Swipe4Down] {
+    for slot in [Slot::TapMore, Slot::SwipeMoreUp, Slot::SwipeMoreDown] {
         let (row, summary, test_btn) = gesture_row(slot, row_title(slot));
         g4.add(&row);
         rows.insert(slot, (row, summary, test_btn));
     }
-    groups.four = Some(g4);
+    groups.more = Some(g4);
 
     // ---- Edge swipes.
     let ge = adw::PreferencesGroup::new();
@@ -853,6 +832,9 @@ fn refresh_banners(state: &SharedState, ui: &SharedUi) {
         _ => {}
     }
     for w in &s.load_warnings {
+        ui.banner_box.append(&banner(w, None, None));
+    }
+    for w in &s.model.warnings {
         ui.banner_box.append(&banner(w, None, None));
     }
 }

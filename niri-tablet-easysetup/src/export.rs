@@ -6,7 +6,7 @@ use crate::model::{ActionValue, GestureModel, Options, Slot};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const SCHEMA: u32 = 1;
+pub const SCHEMA: u32 = 2;
 pub const APP: &str = "niri-tablet-easysetup";
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -26,9 +26,9 @@ impl Slot {
     pub fn export_key(&self) -> &'static str {
         match self {
             Slot::Tap => "tap",
-            Slot::Tap4 => "tap-4",
-            Slot::Swipe4Up => "swipe-4-up",
-            Slot::Swipe4Down => "swipe-4-down",
+            Slot::TapMore => "tap-more",
+            Slot::SwipeMoreUp => "swipe-more-up",
+            Slot::SwipeMoreDown => "swipe-more-down",
             Slot::HoldLeft => "hold-left",
             Slot::HoldRight => "hold-right",
             Slot::HoldUp => "hold-up",
@@ -45,7 +45,15 @@ impl Slot {
     }
 
     pub fn from_export_key(k: &str) -> Option<Slot> {
-        Slot::ALL.iter().copied().find(|s| s.export_key() == k)
+        // Legacy keys from schema 1 (release v26.04.18 and earlier) map to
+        // their renamed slots so old scheme files keep importing.
+        let legacy = match k {
+            "tap-4" => Some(Slot::TapMore),
+            "swipe-4-up" => Some(Slot::SwipeMoreUp),
+            "swipe-4-down" => Some(Slot::SwipeMoreDown),
+            _ => None,
+        };
+        legacy.or_else(|| Slot::ALL.iter().copied().find(|s| s.export_key() == k))
     }
 }
 
@@ -87,6 +95,14 @@ pub fn from_scheme_json(text: &str) -> Result<Imported, String> {
         }
     }
     model.options = scheme.options;
+    if let Some(n) = model.options.fingers {
+        if !matches!(n, 3 | 4) {
+            model.options.fingers = None;
+            model
+                .warnings
+                .push(format!("fingers {n} is not valid (3 or 4); using the default 3"));
+        }
+    }
     Ok(Imported {
         model,
         ignored_keys: ignored,
@@ -134,6 +150,19 @@ mod tests {
         let imp = from_scheme_json(json).unwrap();
         assert_eq!(imp.ignored_keys, vec!["telepathy-mode".to_string()]);
         assert_eq!(imp.model.get(Slot::Tap), &ActionValue::simple("close-window"));
+    }
+
+    #[test]
+    fn legacy_export_keys_import() {
+        // Schema 1 files (release v26.04.18 and earlier) keep importing:
+        // old slot keys map to the renamed slots, invalid fingers resets.
+        let json = r#"{"schema": 1, "app": "x", "slots": {"tap-4": {"kind": "node", "name": "toggle-overview", "args": [], "props": []}, "swipe-4-down": {"kind": "node", "name": "close-window", "args": [], "props": []}}, "options": {"fingers": 5}}"#;
+        let imp = from_scheme_json(json).unwrap();
+        assert_eq!(imp.ignored_keys, Vec::<String>::new());
+        assert_eq!(imp.model.get(Slot::TapMore), &ActionValue::simple("toggle-overview"));
+        assert_eq!(imp.model.get(Slot::SwipeMoreDown), &ActionValue::simple("close-window"));
+        assert_eq!(imp.model.options.fingers, None);
+        assert_eq!(imp.model.warnings.len(), 1);
     }
 
     #[test]

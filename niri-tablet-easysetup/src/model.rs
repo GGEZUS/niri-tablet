@@ -50,9 +50,9 @@ impl From<&JsonArg> for Arg {
 #[serde(rename_all = "kebab-case")]
 pub enum Slot {
     Tap,
-    Tap4,
-    Swipe4Up,
-    Swipe4Down,
+    TapMore,
+    SwipeMoreUp,
+    SwipeMoreDown,
     HoldLeft,
     HoldRight,
     HoldUp,
@@ -70,9 +70,9 @@ pub enum Slot {
 impl Slot {
     pub const ALL: [Slot; 16] = [
         Slot::Tap,
-        Slot::Tap4,
-        Slot::Swipe4Up,
-        Slot::Swipe4Down,
+        Slot::TapMore,
+        Slot::SwipeMoreUp,
+        Slot::SwipeMoreDown,
         Slot::HoldLeft,
         Slot::HoldRight,
         Slot::HoldUp,
@@ -91,9 +91,9 @@ impl Slot {
     pub fn id(&self) -> &'static str {
         match self {
             Slot::Tap => "tap",
-            Slot::Tap4 => "tap-4",
-            Slot::Swipe4Up => "swipe-4-up",
-            Slot::Swipe4Down => "swipe-4-down",
+            Slot::TapMore => "tap-more",
+            Slot::SwipeMoreUp => "swipe-more-up",
+            Slot::SwipeMoreDown => "swipe-more-down",
             Slot::HoldLeft => "left",
             Slot::HoldRight => "right",
             Slot::HoldUp => "up",
@@ -111,10 +111,10 @@ impl Slot {
 
     pub fn friendly_name(&self) -> &'static str {
         match self {
-            Slot::Tap => "3-finger tap",
-            Slot::Tap4 => "4-finger tap",
-            Slot::Swipe4Up => "4-finger flick up",
-            Slot::Swipe4Down => "4-finger flick down",
+            Slot::Tap => "base-finger tap",
+            Slot::TapMore => "extra-finger tap",
+            Slot::SwipeMoreUp => "extra-finger flick up",
+            Slot::SwipeMoreDown => "extra-finger flick down",
             Slot::HoldLeft => "Hold + swipe left",
             Slot::HoldRight => "Hold + swipe right",
             Slot::HoldUp => "Hold + swipe up",
@@ -133,9 +133,9 @@ impl Slot {
     pub fn description(&self) -> &'static str {
         match self {
             Slot::Tap => "Quick tap with the base finger count",
-            Slot::Tap4 => "Quick tap with 4 or more fingers",
-            Slot::Swipe4Up => "Fast flick with 4 or more fingers, upward",
-            Slot::Swipe4Down => "Fast flick with 4 or more fingers, downward",
+            Slot::TapMore => "Quick tap with one finger more than the base count",
+            Slot::SwipeMoreUp => "Fast flick with one finger more than the base count, upward",
+            Slot::SwipeMoreDown => "Fast flick with one finger more than the base count, downward",
             Slot::HoldLeft => "Touch down, hold ~400 ms, then swipe left",
             Slot::HoldRight => "Touch down, hold ~400 ms, then swipe right",
             Slot::HoldUp => "Touch down, hold ~400 ms, then swipe up",
@@ -284,7 +284,7 @@ pub enum ShowTouchPoints {
 pub struct Options {
     /// `off` inside touchscreen-swipe: disables the multi-finger stack.
     pub off: bool,
-    /// `fingers N` (base finger count; None = compiled default 3).
+    /// `fingers N` (base finger count, 3 or 4; None = compiled default 3).
     pub fingers: Option<u8>,
     pub horizontal_swipe: HorizontalSwipe,
     pub show_touch_points: ShowTouchPoints,
@@ -303,6 +303,9 @@ pub struct GestureModel {
     /// Unmodeled child nodes (hot-corners, dnd-edge-*, anything new),
     /// preserved structurally on save.
     pub passthrough: Vec<String>,
+    /// Notes for the user gathered while parsing (legacy names migrated,
+    /// invalid values reset). Cleared on every re-parse; shown as banners.
+    pub warnings: Vec<String>,
 }
 
 impl Default for GestureModel {
@@ -314,6 +317,7 @@ impl Default for GestureModel {
                 .collect(),
             options: Options::default(),
             passthrough: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 }
@@ -370,7 +374,14 @@ impl GestureModel {
                         .first()
                         .and_then(|a| a.text().parse().ok())
                         .ok_or("fingers needs a number")?;
-                    model.options.fingers = Some(n);
+                    if matches!(n, 3 | 4) {
+                        model.options.fingers = Some(n);
+                    } else {
+                        model.options.fingers = None;
+                        model.warnings.push(format!(
+                            "fingers {n} is not valid (3 or 4); using the default 3 until you save"
+                        ));
+                    }
                 }
                 "horizontal-swipe" => {
                     let v = child
@@ -385,9 +396,38 @@ impl GestureModel {
                     };
                 }
                 "tap" => model.set(Slot::Tap, slot_action(child)),
-                "tap-4" => model.set(Slot::Tap4, slot_action(child)),
-                "swipe-4-up" => model.set(Slot::Swipe4Up, slot_action(child)),
-                "swipe-4-down" => model.set(Slot::Swipe4Down, slot_action(child)),
+                "tap-more" => model.set(Slot::TapMore, slot_action(child)),
+                "swipe-more-up" => model.set(Slot::SwipeMoreUp, slot_action(child)),
+                "swipe-more-down" => model.set(Slot::SwipeMoreDown, slot_action(child)),
+                // Legacy names from release v26.04.18 and earlier: read as
+                // their renamed slots (the new name wins if both appear) and
+                // migrate away on save.
+                "tap-4" => {
+                    if matches!(model.get(Slot::TapMore), ActionValue::None) {
+                        model.set(Slot::TapMore, slot_action(child));
+                    }
+                    model
+                        .warnings
+                        .push("tap-4 was renamed tap-more; saving writes the new name".to_string());
+                }
+                "swipe-4-up" => {
+                    if matches!(model.get(Slot::SwipeMoreUp), ActionValue::None) {
+                        model.set(Slot::SwipeMoreUp, slot_action(child));
+                    }
+                    model.warnings.push(
+                        "swipe-4-up was renamed swipe-more-up; saving writes the new name"
+                            .to_string(),
+                    );
+                }
+                "swipe-4-down" => {
+                    if matches!(model.get(Slot::SwipeMoreDown), ActionValue::None) {
+                        model.set(Slot::SwipeMoreDown, slot_action(child));
+                    }
+                    model.warnings.push(
+                        "swipe-4-down was renamed swipe-more-down; saving writes the new name"
+                            .to_string(),
+                    );
+                }
                 "hold" => {
                     for dir in &child.children {
                         let slot = match dir.name.as_str() {
@@ -460,9 +500,9 @@ impl GestureModel {
         }
         for (slot, parent) in [
             (Slot::Tap, "tap"),
-            (Slot::Tap4, "tap-4"),
-            (Slot::Swipe4Down, "swipe-4-down"),
-            (Slot::Swipe4Up, "swipe-4-up"),
+            (Slot::TapMore, "tap-more"),
+            (Slot::SwipeMoreDown, "swipe-more-down"),
+            (Slot::SwipeMoreUp, "swipe-more-up"),
         ] {
             if let Some(node) = slot_node(self.get(slot)) {
                 let mut n = Node::new(parent);
@@ -620,13 +660,13 @@ mod tests {
     fn shipped_default_parses_with_expected_slots() {
         let m = shipped_default();
         assert_eq!(m.get(Slot::Tap), &ActionValue::simple("maximize-column"));
-        assert_eq!(m.get(Slot::Tap4), &ActionValue::simple("toggle-overview"));
+        assert_eq!(m.get(Slot::TapMore), &ActionValue::simple("toggle-overview"));
         assert_eq!(
-            m.get(Slot::Swipe4Down),
+            m.get(Slot::SwipeMoreDown),
             &ActionValue::simple("close-window")
         );
         assert_eq!(
-            m.get(Slot::Swipe4Up),
+            m.get(Slot::SwipeMoreUp),
             &ActionValue::simple("fullscreen-window")
         );
         assert_eq!(m.get(Slot::EdgeBottom), &ActionValue::spawn_sh("~/.local/bin/niri-osk.sh"));
@@ -634,6 +674,7 @@ mod tests {
         assert_eq!(m.options.fingers, Some(3));
         assert_eq!(m.options.horizontal_swipe, HorizontalSwipe::ResizeColumn);
         assert_eq!(m.options.show_touch_points, ShowTouchPoints::Gestures);
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
     }
 
     #[test]
@@ -652,8 +693,9 @@ mod tests {
 
     #[test]
     fn preserves_unmodeled_nodes_and_local_edits() {
-        // Shape of the maintainer's real file: local spawn-sh edits plus an
-        // unmodeled hot-corners node that must survive a save.
+        // Shape of the maintainer's real file (pre-rename): local spawn-sh
+        // edits under the legacy names plus an unmodeled hot-corners node
+        // that must survive a save while the names migrate.
         let src = r#"gestures {
     show-touch-points "gestures"
     touchscreen-swipe {
@@ -686,15 +728,45 @@ mod tests {
             .unwrap()
             .expect("gestures node");
         assert_eq!(
-            m.get(Slot::Tap4).label().as_deref(),
+            m.get(Slot::TapMore).label().as_deref(),
             Some("spawn-sh noctalia msg panel-toggle launcher")
         );
         assert_eq!(m.passthrough.len(), 1);
+        // Legacy names migrate on save; they never reach passthrough.
         let text = m.to_file_text();
         assert!(text.contains("hot-corners"), "passthrough node lost:\n{text}");
+        assert!(text.contains("tap-more"), "{text}");
+        assert!(!text.contains("tap-4"), "legacy name survived:\n{text}");
         let back = GestureModel::parse_file_text(&text).unwrap().unwrap();
         assert_eq!(m.slots, back.slots);
         assert_eq!(m.passthrough, back.passthrough);
+        assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+    }
+
+    #[test]
+    fn legacy_four_finger_names_migrate() {
+        let src = "gestures {\n    touchscreen-swipe {\n        tap-4 { toggle-overview; }\n        swipe-4-up { close-window; }\n        swipe-4-down { fullscreen-window; }\n    }\n}\n";
+        let m = GestureModel::parse_file_text(src).unwrap().unwrap();
+        assert_eq!(m.get(Slot::TapMore), &ActionValue::simple("toggle-overview"));
+        assert_eq!(m.get(Slot::SwipeMoreUp), &ActionValue::simple("close-window"));
+        assert_eq!(m.get(Slot::SwipeMoreDown), &ActionValue::simple("fullscreen-window"));
+        assert_eq!(m.warnings.len(), 3);
+        assert!(m.passthrough.is_empty());
+    }
+
+    #[test]
+    fn new_name_wins_over_legacy() {
+        let src = "gestures {\n    touchscreen-swipe {\n        tap-4 { toggle-overview; }\n        tap-more { close-window; }\n    }\n}\n";
+        let m = GestureModel::parse_file_text(src).unwrap().unwrap();
+        assert_eq!(m.get(Slot::TapMore), &ActionValue::simple("close-window"));
+    }
+
+    #[test]
+    fn out_of_range_fingers_resets() {
+        let src = "gestures {\n    touchscreen-swipe {\n        fingers 5\n    }\n}\n";
+        let m = GestureModel::parse_file_text(src).unwrap().unwrap();
+        assert_eq!(m.options.fingers, None);
+        assert_eq!(m.warnings.len(), 1);
     }
 
     #[test]
