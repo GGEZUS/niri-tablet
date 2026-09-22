@@ -13,6 +13,9 @@
 #   ./update-niri-tablet.sh --main       track the repo's main branch
 #   ./update-niri-tablet.sh --yes        no prompts (needs stdin TTY otherwise)
 #
+# After installing, it also checks ~/.config/niri for nodes the new build
+# rejects (the v26.04.19 gesture rename) and offers to migrate them.
+#
 # The other root scripts are maintainer-only (they need a dev clone of niri):
 # update.sh rebases onto new upstream releases, install.sh rebuilds as-is.
 set -eu
@@ -39,6 +42,117 @@ hdr()  { printf '\n%s%s%s\n' "$B" "$*" "$N"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
 die()  { printf '  %s✗%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+
+# ── v26.04.19 gesture rename ───────────────────────────────────────
+# tap-4 / swipe-4-up / swipe-4-down became tap-more / swipe-more-up /
+# swipe-more-down, and `fingers` is now restricted to 3 or 4. Configs
+# from v26.04.18 or earlier that still use the old names fail to parse
+# on the new build: without migration the next login starts on niri's
+# default config (with an error notification) until the file is fixed.
+# Offer the rename here: opt-in, one dated .bak per touched file, kept
+# only if `niri validate` still passes on the whole include chain.
+check_config_rename() {
+    command -v niri >/dev/null 2>&1 || return 0
+
+    # Only act when the installed build speaks the new names; probing
+    # the binary rather than the version leaves --tag installs of older
+    # releases alone.
+    CFG_PROBE=$(mktemp) || return 0
+    printf 'gestures {\n    touchscreen-swipe {\n        tap-more { toggle-overview; }\n    }\n}\n' >"$CFG_PROBE"
+    if ! niri validate -c "$CFG_PROBE" >/dev/null 2>&1; then
+        rm -f "$CFG_PROBE"
+        return 0
+    fi
+    rm -f "$CFG_PROBE"
+
+    CFG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/niri
+
+    # The documented layout: config.kdl plus the cfg/ fragments it
+    # includes. Files included from elsewhere are not touched.
+    CFG_HITS=0; CFG_FINGERS=0
+    for CFG_F in "$CFG_DIR/config.kdl" "$CFG_DIR"/cfg/*.kdl; do
+        [ -f "$CFG_F" ] || continue
+        grep -qE '\b(tap-4|swipe-4-up|swipe-4-down)\b' "$CFG_F" && CFG_HITS=1
+        for CFG_N in $(sed -n 's/^[[:space:]]*fingers[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "$CFG_F"); do
+            case $CFG_N in 3|4) ;; *) CFG_FINGERS=1 ;; esac
+        done
+    done
+    [ "$CFG_HITS" = 0 ] && [ "$CFG_FINGERS" = 0 ] && return 0
+
+    hdr "config check: the v26.04.19 gesture changes"
+
+    if [ "$CFG_HITS" = 1 ]; then
+        say "  The second-tier gesture nodes were renamed:"
+        say "    tap-4        → tap-more"
+        say "    swipe-4-up   → swipe-more-up"
+        say "    swipe-4-down → swipe-more-down"
+        say "  They now fire at one finger more than the base count (fingers)."
+        say "  The old names no longer parse on this build: the next login"
+        say "  would start on niri's default config, with an error"
+        say "  notification, until they are renamed."
+        for CFG_F in "$CFG_DIR/config.kdl" "$CFG_DIR"/cfg/*.kdl; do
+            [ -f "$CFG_F" ] || continue
+            grep -qE '\b(tap-4|swipe-4-up|swipe-4-down)\b' "$CFG_F" &&
+                say "  ${Y}old names:$N $CFG_F"
+        done
+        CFG_MIGRATE=0
+        if [ "$ASSUME_YES" = 1 ] || [ ! -t 0 ]; then
+            warn "not renaming anything without a prompt (--yes); edit the files above,"
+            say "      or open niri-tablet-easysetup and save, before your next login"
+        else
+            printf '  %s' "rename them now? (per-file .bak backup; undone if niri validate complains) [Y/n] "
+            read -r CFG_REPLY || CFG_REPLY=n
+            case $CFG_REPLY in
+                n*|N*) say "  Leaving the old names $DIM(niri-tablet-easysetup renames them on save too)$N" ;;
+                *) CFG_MIGRATE=1 ;;
+            esac
+        fi
+        if [ "$CFG_MIGRATE" = 1 ]; then
+            CFG_STAMP=$(date +%Y%m%d-%H%M%S)
+            CFG_LIST=''
+            for CFG_F in "$CFG_DIR/config.kdl" "$CFG_DIR"/cfg/*.kdl; do
+                [ -f "$CFG_F" ] || continue
+                grep -qE '\b(tap-4|swipe-4-up|swipe-4-down)\b' "$CFG_F" || continue
+                cp -p "$CFG_F" "$CFG_F.bak-$CFG_STAMP"
+                sed -i -e 's/\btap-4\b/tap-more/g' \
+                       -e 's/\bswipe-4-up\b/swipe-more-up/g' \
+                       -e 's/\bswipe-4-down\b/swipe-more-down/g' "$CFG_F"
+                ok "renamed in $CFG_F $DIM(backup: $CFG_F.bak-$CFG_STAMP)$N"
+                CFG_LIST="$CFG_LIST$CFG_F
+"
+            done
+            if [ -f "$CFG_DIR/config.kdl" ]; then
+                if CFG_ERR=$(niri validate -c "$CFG_DIR/config.kdl" 2>&1); then
+                    ok "niri validate passes on the migrated config"
+                    say "    $DIM(the still-running old build may show one config-error notification until re-login)$N"
+                else
+                    printf '%s\n' "$CFG_LIST" | while IFS= read -r CFG_F; do
+                        [ -n "$CFG_F" ] || continue
+                        cp -p "$CFG_F.bak-$CFG_STAMP" "$CFG_F"
+                        rm -f "$CFG_F.bak-$CFG_STAMP"
+                    done
+                    warn "niri validate rejected the result; the files were restored unchanged"
+                    printf '%s\n' "$CFG_ERR" | sed 's/^/    /'
+                    say "    $DIM(fix the error above, or open niri-tablet-easysetup and save)$N"
+                fi
+            else
+                say "    $DIM(no config.kdl found to validate; run niri validate yourself before login)$N"
+            fi
+        fi
+    fi
+
+    if [ "$CFG_FINGERS" = 1 ]; then
+        warn "a fingers value outside 3-4 is now a hard config error (\"fingers must be 3 or 4\")"
+        for CFG_F in "$CFG_DIR/config.kdl" "$CFG_DIR"/cfg/*.kdl; do
+            [ -f "$CFG_F" ] || continue
+            for CFG_N in $(sed -n 's/^[[:space:]]*fingers[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "$CFG_F"); do
+                case $CFG_N in 3|4) ;; *) say "  ${Y}fingers $CFG_N:$N $CFG_F" ;; esac
+            done
+        done
+        say "      Set it to 3 or 4 by hand, then re-run me (the rename is offered again);"
+        say "      niri-tablet-easysetup resets it on save"
+    fi
+}
 
 # ── args ───────────────────────────────────────────────────────────
 CHECK=0; FORCE=0; ASSUME_YES=0; DO_MAIN=0; TARGET=''
@@ -137,6 +251,7 @@ elif [ "$UP_TO_DATE" = 1 ]; then
     else
         ok "already up to date ($TARGET) — nothing to do"
         say "    $DIM--force rebuilds anyway; --main tracks the development branch$N"
+        check_config_rename
         exit 0
     fi
 else
@@ -200,6 +315,9 @@ if ! grep -E '^[[:space:]]*IgnorePkg([[:space:]]|=)' /etc/pacman.conf | grep -qw
         ok "niri pinned $DIM(backup: /etc/pacman.conf.bak-niri-tablet)$N"
     fi
 fi
+
+# ── config rename check (no-op unless old names / bad fingers) ─────
+check_config_rename
 
 # ── done ───────────────────────────────────────────────────────────
 say ""
