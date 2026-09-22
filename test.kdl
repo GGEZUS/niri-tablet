@@ -12,8 +12,8 @@ gestures {
     touchscreen-swipe {
         fingers 3
         horizontal-swipe "resize-column"
-        tap { maximize-column; }   // also the default
-        tap-4 { spawn "foot"; }    // 4+-finger tap (stand-in for the launcher)
+        tap { maximize-column; }        // also the default
+        tap-more { spawn "foot"; }      // extra-finger tap (stand-in for the launcher)
     }
     touchscreen-edge-swipe {
         bottom { spawn "foot"; }   // stand-in for the launcher when testing nested

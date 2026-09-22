@@ -1,7 +1,7 @@
 From 817e59140ebbad84e873ffbc8c6f6edaf3bae282 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Tue, 8 Sep 2026 05:51:12 +0100
-Subject: [PATCH 18/18] docs: document the touchscreen-swipe action options
+Subject: [PATCH 18/19] docs: document the touchscreen-swipe action options
 
 Document the full touchscreen-swipe node set (previously only fingers
 and off were listed): tap, tap-4, swipe-4-down/up, hold, and the new

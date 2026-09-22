@@ -17,9 +17,9 @@ gestures {
 
     // Multi-finger gestures: the two animated drags, taps, flicks, hold-swipes.
     touchscreen-swipe {
-        // Minimum finger count for everything in this block that has no
-        // number in its name (the drags and `tap`). The *-4 nodes below
-        // override their gesture for 4+ fingers.
+        // Base finger count for everything in this block that has no "more"
+        // in its name (the drags and `tap`): 3 or 4. The *-more nodes below
+        // override their gesture at one finger more than this (4 by default).
         fingers 3
 
         // What the horizontal drag does: "resize-column" widens/narrows the
@@ -28,17 +28,18 @@ gestures {
         horizontal-swipe "resize-column"
 
         // The discrete gestures (taps, flicks) fire once, on finger lift.
-        tap          { maximize-column; }                      // maximize / restore
-        tap-4        { toggle-overview; }                      // niri's own overview
-        swipe-4-down { close-window; }
-        swipe-4-up   { fullscreen-window; }                     // fullscreen on/off
+        tap             { maximize-column; }                    // maximize / restore
+        tap-more        { toggle-overview; }                    // niri's own overview
+        swipe-more-down { close-window; }
+        swipe-more-up   { fullscreen-window; }                  // fullscreen on/off
 
-        // Prefer an app launcher on the 4-tap? Comment out the toggle-overview
-        // line above and uncomment ONE of these (or write your own spawn):
-        // tap-4 { spawn-sh "noctalia msg panel-toggle launcher"; }  // Noctalia
-        // tap-4 { spawn "fuzzel"; }                                  // fuzzel
-        // tap-4 { spawn "wofi" "--show" "drun"; }                    // wofi
-        // tap-4 { spawn "rofi" "-show" "drun"; }                     // rofi
+        // Prefer an app launcher on the extra-finger tap? Comment out the
+        // toggle-overview line above and uncomment ONE of these (or write
+        // your own spawn):
+        // tap-more { spawn-sh "noctalia msg panel-toggle launcher"; }  // Noctalia
+        // tap-more { spawn "fuzzel"; }                                 // fuzzel
+        // tap-more { spawn "wofi" "--show" "drun"; }                   // wofi
+        // tap-more { spawn "rofi" "-show" "drun"; }                    // rofi
 
         // Press, hold ~400ms, then swipe: moves the focused window (left or
         // right a column, up or down a workspace) instead of the animated

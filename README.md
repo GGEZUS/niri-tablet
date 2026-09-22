@@ -29,7 +29,7 @@ any niri action, same as keybinds. Change the file as you see fit.
 | **3-finger hold + swipe** | |
 | rest ~400ms, then swipe left/right | move the focused window one column left/right |
 | rest ~400ms, then swipe up/down | move the focused window one workspace up/down |
-| **4-finger swipes** | |
+| **4-finger swipes** (one finger more than `fingers`; 4 by default) | |
 | tap | window overview (niri's own, works with zero setup); prefer an app launcher? Noctalia, fuzzel, wofi and rofi lines sit commented in the config, ready to swap in |
 | flick down | close the focused window |
 | flick up | toggle the focused window fullscreen |
@@ -83,7 +83,7 @@ input is never touched. Meant for demo videos and for debugging gestures:
 
 ```kdl
 gestures {
-    show-touch-points "gestures"   // dots only for 3+/4-finger gesture touches
+    show-touch-points "gestures"   // dots only while a multi-finger gesture is down
     // show-touch-points "all"     // every finger (debugging)
 }
 ```
@@ -123,10 +123,11 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 18 patches (`git am`-able, authorship
-  preserved) sitting next to it, as makepkg requires: animated 3-finger swipes
-  reusing niri's touchpad gesture pipeline, 3/4-finger taps, discrete 4-finger
-  flicks, hold-swipes, gesture ownership (multi-finger touches are cancelled
+- **`pkg/`** — the Arch PKGBUILD plus the 19 patches (`git am`-able, authorship
+  preserved) sitting next to it, as makepkg requires: animated multi-finger
+  swipes reusing niri's touchpad gesture pipeline, taps and discrete vertical
+  flicks at one finger more than the base count (3 or 4), hold-swipes,
+  gesture ownership (multi-finger touches are cancelled
   client-side so apps don't react to them), single-finger edge and corner
   swipes (8 zones, any action), a horizontal-swipe mode that resizes the
   focused window's width live (on by default in the shipped config), touch

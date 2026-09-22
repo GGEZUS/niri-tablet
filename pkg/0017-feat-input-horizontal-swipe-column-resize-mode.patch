@@ -1,7 +1,7 @@
 From 39d05f3d2fd8951e4ac792b1098d7b639aebb858 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Tue, 8 Sep 2026 05:51:07 +0100
-Subject: [PATCH 17/18] feat(input): horizontal swipe column-resize mode
+Subject: [PATCH 17/19] feat(input): horizontal swipe column-resize mode
 
 New touchscreen-swipe option: horizontal-swipe "move-view" (default,
 the animated view scroll) or "resize-column". In resize mode a quick

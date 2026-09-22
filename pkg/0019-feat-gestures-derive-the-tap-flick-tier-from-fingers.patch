@@ -1,0 +1,394 @@
+From 3c4551bf9d3f42413a2b91d72bb98044b9b43a36 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Tue, 22 Sep 2026 19:40:10 +0100
+Subject: [PATCH 19/19] feat(gestures): derive the tap/flick tier from fingers
+
+The tap-4/swipe-4-up/swipe-4-down nodes become tap-more/swipe-more-up/
+swipe-more-down and apply at one finger more than touchscreen-swipe.fingers
+(4 by default) instead of a hardcoded four or more. fingers is now
+restricted to 3 or 4 at parse time: lower counts clash with standard
+touchscreen behavior and higher counts push the second tier past
+one-handed use.
+---
+ docs/wiki/Configuration:-Gestures.md |  33 ++++----
+ niri-config/src/gestures.rs          | 112 +++++++++++++++++++++------
+ niri-config/src/lib.rs               |  57 +++++++++++++-
+ src/input/mod.rs                     |  23 +++---
+ 4 files changed, 177 insertions(+), 48 deletions(-)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 7c6f067c..9353e147 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -34,9 +34,9 @@ gestures {
+         // off
+         // horizontal-swipe "resize-column"
+         // tap { maximize-column; }
+-        // tap-4 { toggle-overview; }
+-        // swipe-4-down { close-window; }
+-        // swipe-4-up { spawn-sh "on-screen-keyboard"; }
++        // tap-more { toggle-overview; }
++        // swipe-more-down { close-window; }
++        // swipe-more-up { spawn-sh "on-screen-keyboard"; }
+         // hold {
+         //     left { move-column-left; }
+         //     right { move-column-right; }
+@@ -146,7 +146,9 @@ You can also customize hot corners per-output [in the output config](./Configura
+ 
+ ### `touchscreen-swipe`
+ 
+-Three-finger swipe gestures on a touchscreen, replicating the touchpad behavior:
++<sup>Since: 26.04</sup>
++
++Multi-finger swipe gestures on a touchscreen, replicating the touchpad behavior:
+ - Vertical swipe to switch workspaces (continuous carousel).
+ - Horizontal swipe to move the view.
+ 
+@@ -155,11 +157,12 @@ The gesture uses the same continuous animation and inertia as the touchpad swipe
+ On top of the animated swipes, discrete actions can be bound to taps and specific
+ swipe shapes, and the horizontal swipe can be switched to resize the focused
+ window. Anything left unbound falls back to the animated gesture (or, for taps
+-with four or more fingers, to the regular `tap` action).
++with more fingers than `fingers`, to the regular `tap` action).
+ 
+ The options are:
+ 
+-- `fingers`: number of fingers required to trigger the gesture (default: 3).
++- `fingers`: number of fingers required to trigger the gesture; must be 3 or 4
++  (default: 3).
+ - `off`: disable touchscreen swipe gestures entirely.
+ - `horizontal-swipe`: what a quick horizontal swipe does (default:
+   `"move-view"`). `"resize-column"` makes the swipe resize the focused
+@@ -170,10 +173,11 @@ The options are:
+ - `tap`: action for a quick tap with `fingers` fingers (default:
+   `maximize-column`). All fingers down and up within a short window, without
+   enough movement to become a swipe.
+-- `tap-4`: action for taps involving four or more fingers; overrides `tap` for
+-  those.
+-- `swipe-4-down` / `swipe-4-up`: discrete action for a quick vertical swipe
+-  with four or more fingers. Unset, such swipes drive the workspace carousel.
++- `tap-more`: action for taps with one finger more than `fingers` (4 by
++  default); overrides `tap` for those.
++- `swipe-more-down` / `swipe-more-up`: discrete action for a quick vertical
++  swipe with one finger more than `fingers` (4 by default). Unset, such swipes
++  drive the workspace carousel.
+ - `hold { left/right/up/down { ... } }`: discrete actions for held swipes:
+   fingers resting still for a moment (~400ms) before swiping. A direction left
+   unset falls back to the animated swipe.
+@@ -181,11 +185,12 @@ The options are:
+ ```kdl
+ gestures {
+     touchscreen-swipe {
+-        // Example: horizontal swipes resize the focused window, a 4-finger
+-        // tap opens the overview, a 4-finger flick down closes the window.
++        // Example: horizontal swipes resize the focused window, a tap with
++        // one finger more opens the overview, an extra-finger flick down
++        // closes the window.
+         horizontal-swipe "resize-column"
+-        tap-4 { toggle-overview; }
+-        swipe-4-down { close-window; }
++        tap-more { toggle-overview; }
++        swipe-more-down { close-window; }
+     }
+ }
+ ```
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 42c3605e..91f92cd2 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -195,14 +195,17 @@ pub struct TouchscreenSwipe {
+     /// Action performed on a quick multi-finger tap: all fingers down and up
+     /// within a short window, without enough movement to become a swipe.
+     pub tap: Option<Action>,
+-    /// Action for taps involving four or more fingers; overrides `tap` for those.
+-    pub tap_4: Option<Action>,
+-    /// Discrete action for a vertical swipe with four or more fingers
+-    /// (downward). When unset, such swipes drive the workspace carousel.
+-    pub swipe_4_down: Option<Action>,
+-    /// Discrete action for a vertical swipe with four or more fingers
+-    /// (upward). When unset, such swipes drive the workspace carousel.
+-    pub swipe_4_up: Option<Action>,
++    /// Action for taps with more fingers than `fingers` (4 by default);
++    /// overrides `tap` for those.
++    pub tap_more: Option<Action>,
++    /// Discrete action for a vertical swipe with more fingers than `fingers`
++    /// (downward; 4 by default). When unset, such swipes drive the workspace
++    /// carousel.
++    pub swipe_more_down: Option<Action>,
++    /// Discrete action for a vertical swipe with more fingers than `fingers`
++    /// (upward; 4 by default). When unset, such swipes drive the workspace
++    /// carousel.
++    pub swipe_more_up: Option<Action>,
+     /// Discrete actions for held swipes: fingers resting still for a moment
+     /// before moving past the swipe threshold. A direction left unset falls
+     /// back to the animated swipe for that direction.
+@@ -216,30 +219,95 @@ impl Default for TouchscreenSwipe {
+             fingers: 3,
+             horizontal_swipe: HorizontalSwipe::default(),
+             tap: Some(Action::MaximizeColumn),
+-            tap_4: None,
+-            swipe_4_down: None,
+-            swipe_4_up: None,
++            tap_more: None,
++            swipe_more_down: None,
++            swipe_more_up: None,
+             hold: TouchscreenSwipeHold::default(),
+         }
+     }
+ }
+ 
++/// The base finger count for touchscreen swipe gestures: 3 or 4.
++///
++/// A newtype so the parser can reject anything else at decode time: below 3
++/// clashes with standard touchscreen behavior, and above 4 the second
++/// gesture tier (`tap-more`, `swipe-more-*`) needs more fingers than one
++/// hand comfortably provides.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct FingerCount(pub u8);
++
++impl Default for FingerCount {
++    fn default() -> Self {
++        Self(3)
++    }
++}
++
++impl MergeWith<FingerCount> for u8 {
++    fn merge_with(&mut self, part: &FingerCount) {
++        *self = part.0;
++    }
++}
++
++impl<S: knuffel::traits::ErrorSpan> knuffel::DecodeScalar<S> for FingerCount {
++    fn type_check(
++        type_name: &Option<knuffel::span::Spanned<knuffel::ast::TypeName, S>>,
++        ctx: &mut knuffel::decode::Context<S>,
++    ) {
++        if let Some(type_name) = &type_name {
++            ctx.emit_error(DecodeError::unexpected(
++                type_name,
++                "type name",
++                "no type name expected for this node",
++            ));
++        }
++    }
++
++    fn raw_decode(
++        val: &knuffel::span::Spanned<knuffel::ast::Literal, S>,
++        ctx: &mut knuffel::decode::Context<S>,
++    ) -> Result<Self, DecodeError<S>> {
++        match &**val {
++            knuffel::ast::Literal::Int(ref value) => match value.try_into() {
++                Ok(v) if (3..=4).contains(&v) => Ok(Self(v)),
++                Ok(_) => {
++                    ctx.emit_error(DecodeError::conversion(
++                        val,
++                        "fingers must be 3 or 4",
++                    ));
++                    Ok(Self::default())
++                }
++                Err(e) => {
++                    ctx.emit_error(DecodeError::conversion(val, e));
++                    Ok(Self::default())
++                }
++            },
++            _ => {
++                ctx.emit_error(DecodeError::unsupported(
++                    val,
++                    "Unsupported value, only whole numbers are recognized",
++                ));
++                Ok(Self::default())
++            }
++        }
++    }
++}
++
+ #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+ pub struct TouchscreenSwipePart {
+     #[knuffel(child)]
+     pub off: bool,
+     #[knuffel(child, unwrap(argument))]
+-    pub fingers: Option<u8>,
++    pub fingers: Option<FingerCount>,
+     #[knuffel(child, unwrap(argument))]
+     pub horizontal_swipe: Option<HorizontalSwipe>,
+     #[knuffel(child)]
+     pub tap: Option<TouchscreenTap>,
+     #[knuffel(child)]
+-    pub tap_4: Option<TouchscreenTap>,
++    pub tap_more: Option<TouchscreenTap>,
+     #[knuffel(child)]
+-    pub swipe_4_down: Option<TouchscreenTap>,
++    pub swipe_more_down: Option<TouchscreenTap>,
+     #[knuffel(child)]
+-    pub swipe_4_up: Option<TouchscreenTap>,
++    pub swipe_more_up: Option<TouchscreenTap>,
+     #[knuffel(child)]
+     pub hold: Option<TouchscreenSwipeHoldPart>,
+ }
+@@ -249,21 +317,21 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+         if part.off {
+             self.off = true;
+         }
+-        merge_clone!((self, part), fingers);
++        merge!((self, part), fingers);
+         if let Some(horizontal_swipe) = part.horizontal_swipe {
+             self.horizontal_swipe = horizontal_swipe;
+         }
+         if let Some(tap) = &part.tap {
+             self.tap = Some(tap.action.clone());
+         }
+-        if let Some(tap_4) = &part.tap_4 {
+-            self.tap_4 = Some(tap_4.action.clone());
++        if let Some(tap_more) = &part.tap_more {
++            self.tap_more = Some(tap_more.action.clone());
+         }
+-        if let Some(a) = &part.swipe_4_down {
+-            self.swipe_4_down = Some(a.action.clone());
++        if let Some(a) = &part.swipe_more_down {
++            self.swipe_more_down = Some(a.action.clone());
+         }
+-        if let Some(a) = &part.swipe_4_up {
+-            self.swipe_4_up = Some(a.action.clone());
++        if let Some(a) = &part.swipe_more_up {
++            self.swipe_more_up = Some(a.action.clone());
+         }
+         if let Some(hold) = &part.hold {
+             self.hold.merge_with(hold);
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 35b8f85f..2f1e3c02 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -745,6 +745,57 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn gestures_touchscreen_swipe_fingers() {
++        use crate::binds::Action;
++
++        // Default is 3.
++        let parsed = Config::parse_mem("").unwrap();
++        assert_eq!(parsed.gestures.touchscreen_swipe.fingers, 3);
++
++        // 4 is accepted, and the second-tier nodes keep parsing with it.
++        let parsed = do_parse(
++            r#"
++            gestures {
++                touchscreen-swipe {
++                    fingers 4
++                    tap { focus-column-left; }
++                    tap-more { toggle-overview; }
++                    swipe-more-down { close-window; }
++                }
++            }
++            "#,
++        );
++        let swipe = &parsed.gestures.touchscreen_swipe;
++        assert_eq!(swipe.fingers, 4);
++        assert_eq!(swipe.tap, Some(Action::FocusColumnLeft));
++        assert_eq!(swipe.tap_more, Some(Action::ToggleOverview));
++        assert_eq!(swipe.swipe_more_down, Some(Action::CloseWindow));
++        assert_eq!(swipe.swipe_more_up, None);
++
++        // Anything outside 3..=4 is a hard parse error.
++        for text in [
++            r#"
++            gestures {
++                touchscreen-swipe {
++                    fingers 2
++                }
++            }
++            "#,
++            r#"
++            gestures {
++                touchscreen-swipe {
++                    fingers 5
++                }
++            }
++            "#,
++        ] {
++            let err = Config::parse_mem(text).unwrap_err();
++            let msg = format!("{err:?}");
++            assert!(msg.contains("fingers must be 3 or 4"), "{msg}");
++        }
++    }
++
+     #[test]
+     fn parse() {
+         let parsed = do_parse(
+@@ -1769,9 +1820,9 @@ mod tests {
+                     tap: Some(
+                         MaximizeColumn,
+                     ),
+-                    tap_4: None,
+-                    swipe_4_down: None,
+-                    swipe_4_up: None,
++                    tap_more: None,
++                    swipe_more_down: None,
++                    swipe_more_up: None,
+                     hold: TouchscreenSwipeHold {
+                         left: None,
+                         right: None,
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index e4c00ad7..467b94f2 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4399,10 +4399,12 @@ impl State {
+                 || self.niri.window_mru_ui.is_open()
+                 || self.niri.layout.is_overview_open();
+             if !touchscreen_swipe.off && !dominated {
+-                // Four-or-more-finger taps get their own action when configured.
+-                let action = if fingers >= 4 {
++                let fingers_cfg = usize::from(touchscreen_swipe.fingers);
++                // Taps with one finger more than `fingers` get their own
++                // action when configured.
++                let action = if fingers > fingers_cfg {
+                     touchscreen_swipe
+-                        .tap_4
++                        .tap_more
+                         .clone()
+                         .or(touchscreen_swipe.tap.clone())
+                 } else {
+@@ -4532,9 +4534,12 @@ impl State {
+                                     .touchscreen_swipe
+                                     .clone();
+ 
++                                let fingers_cfg = usize::from(touchscreen_swipe.fingers);
++
+                                 // Discrete actions: a held swipe resolves to its
+-                                // `hold` direction binding; a quick 4+-finger
+-                                // vertical swipe to swipe-4-up/down.
++                                // `hold` direction binding; a quick vertical
++                                // swipe with one finger more than `fingers` to
++                                // swipe-more-up/down.
+                                 let discrete_action = if is_hold {
+                                     let hold = &touchscreen_swipe.hold;
+                                     match direction {
+@@ -4553,12 +4558,13 @@ impl State {
+                                             }
+                                         }
+                                     }
+-                                } else if fingers >= 4 && direction == SwipeDirection::Vertical
++                                } else if fingers > fingers_cfg
++                                    && direction == SwipeDirection::Vertical
+                                 {
+                                     if delta_y > 0.0 {
+-                                        touchscreen_swipe.swipe_4_down.clone()
++                                        touchscreen_swipe.swipe_more_down.clone()
+                                     } else {
+-                                        touchscreen_swipe.swipe_4_up.clone()
++                                        touchscreen_swipe.swipe_more_up.clone()
+                                     }
+                                 } else {
+                                     None
+@@ -4571,7 +4577,6 @@ impl State {
+                                     );
+                                 }
+ 
+-                                let fingers_cfg = touchscreen_swipe.fingers as usize;
+                                 let debug_log_cfg =
+                                     self.niri.config.borrow().gestures.debug_log;
+                                 let tracker = std::mem::replace(
+-- 
+2.55.0
+

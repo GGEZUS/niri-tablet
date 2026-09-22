@@ -1,7 +1,7 @@
 From 543d083c515a4f5fc8a2dbd44c75f5978be488b5 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Tue, 8 Sep 2026 05:39:29 +0100
-Subject: [PATCH 16/18] fix(test): edge-swipe test helper rectangle
+Subject: [PATCH 16/19] fix(test): edge-swipe test helper rectangle
  construction
 
 The geom() helper built its Rectangle from bare (x, y) / (w, h) tuples,
