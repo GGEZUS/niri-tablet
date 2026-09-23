@@ -20,4 +20,8 @@ cargo build --release
 `--check` prints a headless report (niri support, managed file, current
 scheme as JSON). Docs: the [EasySetup wiki page](https://github.com/GGEZUS/niri-tablet/wiki/EasySetup).
 
-License: GPL-3.0-only.
+`data/` holds the desktop entry and icon for app launchers;
+`update-niri-tablet.sh` installs both for you. The icon is niri's logo,
+[CC BY-SA 4.0](https://github.com/niri-wm/niri/wiki/Name-and-Logo).
+
+License: GPL-3.0-only (the icon file is CC BY-SA 4.0).

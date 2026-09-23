@@ -16,7 +16,9 @@
 # After installing, it also checks ~/.config/niri for nodes the new build
 # rejects (the v26.04.20 gesture rename) and offers to migrate them, and
 # rebuilds niri-tablet-easysetup (the GUI configurator) when its sources
-# changed — a plain cargo build, no sudo.
+# changed — a plain cargo build, no sudo. It also installs the app's
+# launcher entry (niri logo icon) and a ~/.local/bin symlink, so the GUI
+# shows up in app launchers by itself.
 #
 # The other root scripts are maintainer-only (they need a dev clone of niri):
 # update.sh rebases onto new upstream releases, install.sh rebuilds as-is.
@@ -165,24 +167,43 @@ build_easysetup() {
     ES_DIR=$ROOT/niri-tablet-easysetup
     [ -f "$ES_DIR/Cargo.toml" ] || return 0
     ES_BIN=$ES_DIR/target/release/niri-tablet-easysetup
-    if [ -x "$ES_BIN" ] &&
-       [ -z "$(find "$ES_DIR/src" "$ES_DIR/Cargo.toml" "$ES_DIR/Cargo.lock" \
+    if ! [ -x "$ES_BIN" ] ||
+       [ -n "$(find "$ES_DIR/src" "$ES_DIR/Cargo.toml" "$ES_DIR/Cargo.lock" \
               -newer "$ES_BIN" -print -quit 2>/dev/null)" ]; then
-        return 0
+        if command -v cargo >/dev/null 2>&1; then
+            hdr "building niri-tablet-easysetup (the gesture GUI)"
+            say "  $DIM(a plain cargo build, no sudo; the first build takes a couple of minutes)$N"
+            if cargo build --release --manifest-path "$ES_DIR/Cargo.toml"; then
+                ok "niri-tablet-easysetup built: $ES_BIN"
+            else
+                warn "the easysetup build failed — the niri package above is unaffected; retry with"
+                say "      $DIM(cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
+            fi
+        else
+            warn "cargo not found — skipped niri-tablet-easysetup (the gesture GUI)"
+            say "      $DIM(build it later: cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
+        fi
     fi
-    if ! command -v cargo >/dev/null 2>&1; then
-        warn "cargo not found — skipped niri-tablet-easysetup (the gesture GUI)"
-        say "      $DIM(build it later: cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
-        return 0
-    fi
-    hdr "building niri-tablet-easysetup (the gesture GUI)"
-    say "  $DIM(a plain cargo build, no sudo; the first build takes a couple of minutes)$N"
-    if cargo build --release --manifest-path "$ES_DIR/Cargo.toml"; then
-        ok "niri-tablet-easysetup built: $ES_BIN"
-        say "    $DIM(symlink it into ~/.local/bin to launch by name — the wiki's EasySetup page has the steps)$N"
+
+    # Launcher entry (niri logo icon) + a ~/.local/bin symlink, all
+    # user-local, no sudo. Runs on every invocation so first installs and
+    # already-up-to-date runs get it too.
+    ES_DATA=$ES_DIR/data
+    ES_DESKTOP=$ES_DATA/com.github.ggezus.NiriTabletEasySetup.desktop
+    ES_ICON=$ES_DATA/icons/hicolor/scalable/apps/com.github.ggezus.NiriTabletEasySetup.svg
+    XDG_DATA=${XDG_DATA_HOME:-$HOME/.local/share}
+    if [ -x "$ES_BIN" ] && [ -f "$ES_DESKTOP" ] && [ -f "$ES_ICON" ] &&
+       mkdir -p "$HOME/.local/bin" &&
+       ln -sfn "$ES_BIN" "$HOME/.local/bin/niri-tablet-easysetup" &&
+       install -Dm644 "$ES_DESKTOP" "$XDG_DATA/applications/com.github.ggezus.NiriTabletEasySetup.desktop" &&
+       install -Dm644 "$ES_ICON" "$XDG_DATA/icons/hicolor/scalable/apps/com.github.ggezus.NiriTabletEasySetup.svg"; then
+        ok "EasySetup launcher entry installed (niri logo icon): $XDG_DATA/applications"
+        case ":$PATH:" in
+            *":$HOME/.local/bin:"*) ;;
+            *) say "    $DIM(~/.local/bin is not on your PATH yet — re-login once and 'niri-tablet-easysetup' works by name)$N" ;;
+        esac
     else
-        warn "the easysetup build failed — the niri package above is unaffected; retry with"
-        say "      $DIM(cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
+        warn "could not install the EasySetup launcher entry — see the EasySetup wiki page for the manual steps"
     fi
 }
 

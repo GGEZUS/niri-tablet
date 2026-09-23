@@ -52,8 +52,9 @@ repo is a small GTK app that does exactly that: it loads your current
 scheme, offers installed apps and niri actions for every gesture, fires
 test runs through `niri msg`, and saves only what `niri validate`
 accepts (the running compositor confirms the reload). On Arch,
-`update-niri-tablet.sh` builds it for you, first install included;
-elsewhere, `cargo build --release` inside the directory. Details in the
+`update-niri-tablet.sh` builds it for you, first install included, and
+adds it to your app launcher (niri logo icon); elsewhere,
+`cargo build --release` inside the directory. Details in the
 [EasySetup wiki page](https://github.com/GGEZUS/niri-tablet/wiki/EasySetup).
 
 ![easysetup](https://raw.githubusercontent.com/GGEZUS/niri-tablet/main/demo/easysetup.webp)
@@ -164,8 +165,8 @@ cd niri-tablet
 
 It fetches the latest release, builds it (the `sudo` prompt for the
 install comes from `makepkg`), pins `IgnorePkg = niri` in
-`/etc/pacman.conf` if that pin is missing, and builds the EasySetup GUI
-(no sudo). Manual equivalent:
+`/etc/pacman.conf` if that pin is missing, and sets up the EasySetup GUI
+(build, launcher entry and icon; no sudo). Manual equivalent:
 
 ```bash
 cd niri-tablet/pkg
@@ -251,7 +252,8 @@ version, builds and installs the package, and re-checks the
 `IgnorePkg = niri` pin. After v26.04.20 it also checks your config for the
 renamed gesture nodes and offers to migrate them (dated backups; undone
 unless `niri validate` passes). The GUI configurator is rebuilt too,
-whenever its sources changed (a plain cargo build, no sudo).
+whenever its sources changed (a plain cargo build, no sudo), and its
+launcher entry and icon are kept installed.
 Useful flags: `--check` reports without
 touching anything, `--force` rebuilds an up-to-date install,
 `--tag vX.Y.Z` picks a specific release, `--main` tracks the development
@@ -333,4 +335,6 @@ niri/      maintainer's dev clone for rebasing (not part of the repo)
 License: **GPL-3.0-only** (the patches modify niri, also GPL-3.0-only).
 Swipe foundation by Mario St Jr; taps, flicks, fixes, scripts and packaging
 by [GGEZUS](https://github.com/GGEZUS); NixOS instructions by
-[lamarios](https://github.com/lamarios) (PR #1).
+[lamarios](https://github.com/lamarios) (PR #1). EasySetup's app icon is
+niri's logo, used under
+[CC BY-SA 4.0](https://github.com/niri-wm/niri/wiki/Name-and-Logo).

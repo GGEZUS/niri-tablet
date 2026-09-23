@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=niri-tablet EasySetup
+GenericName=Gesture configurator
+Comment=Configure touchscreen gestures for niri-tablet
+Exec=niri-tablet-easysetup
+TryExec=niri-tablet-easysetup
+Icon=com.github.ggezus.NiriTabletEasySetup
+Terminal=false
+Categories=Settings;DesktopSettings;GTK;
+Keywords=gestures;touch;tablet;niri;touchscreen;
