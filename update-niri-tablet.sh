@@ -20,6 +20,12 @@
 # launcher entry (niri logo icon) and a ~/.local/bin symlink, so the GUI
 # shows up in app launchers by itself.
 #
+# A plain release run leaves the clone detached on the last release tag,
+# so the script itself can be older than origin/main. Before doing
+# anything it therefore refreshes itself from origin/main and re-execs
+# (guarded, no loop), keeping updater fixes and new sub-steps from
+# waiting on the next release tag.
+#
 # The other root scripts are maintainer-only (they need a dev clone of niri):
 # update.sh rebases onto new upstream releases, install.sh rebuilds as-is.
 set -eu
@@ -207,6 +213,47 @@ build_easysetup() {
     fi
 }
 
+# ── preflight ──────────────────────────────────────────────────────
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
+[ -f pkg/PKGBUILD ] || die "pkg/PKGBUILD not found — run me from a niri-tablet clone"
+command -v git     >/dev/null 2>&1 || die "git not found"
+command -v makepkg >/dev/null 2>&1 || die "makepkg not found — install base-devel first (pacman -S base-devel)"
+command -v pacman  >/dev/null 2>&1 || die "pacman not found — this updater is Arch-only"
+
+# Help must not need the network: answer it before the fetch below.
+case " $* " in
+    *' -h '*|*' --help '*) usage; exit 0 ;;
+esac
+
+hdr "niri-tablet updater"
+
+git fetch origin --tags --quiet ||
+    die "git fetch failed — check your network and the clone's origin remote"
+
+# ── self-update ─────────────────────────────────────────────────────
+# See the header comment: the clone usually sits detached on the last
+# release tag, so this running copy can be older than origin/main. Swap
+# in the newest script and re-exec before anything else happens. Once
+# the checkout below succeeds the file on disk is main's version, so
+# exec is safe; the env var stops a re-exec loop when the local copy
+# intentionally differs from origin/main (e.g. maintainer edits).
+# This runs before the arg loop on purpose: re-exec needs "$@" still
+# holding the original command line.
+if [ "${NIRI_TABLET_UPDATER_SELF:-}" != 1 ]; then
+    UPD_SELF=$(git hash-object -- "$ROOT/update-niri-tablet.sh")
+    UPD_MAIN=$(git rev-parse -q --verify 'origin/main:update-niri-tablet.sh' 2>/dev/null || true)
+    if [ -n "$UPD_MAIN" ] && [ "$UPD_SELF" != "$UPD_MAIN" ]; then
+        if git checkout -q main 2>/dev/null ||
+           git checkout -q -b main --track origin/main 2>/dev/null; then
+            git pull --ff-only --quiet 2>/dev/null || true
+            say "  ${DIM}refreshed the updater from origin/main$N"
+            NIRI_TABLET_UPDATER_SELF=1 exec "$ROOT/update-niri-tablet.sh" "$@"
+        fi
+        say "  ${DIM}could not refresh the updater (local changes?) — continuing with this copy$N"
+    fi
+fi
+
 # ── args ───────────────────────────────────────────────────────────
 CHECK=0; FORCE=0; ASSUME_YES=0; DO_MAIN=0; TARGET=''
 while [ $# -gt 0 ]; do
@@ -223,19 +270,6 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-
-# ── preflight ──────────────────────────────────────────────────────
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$ROOT"
-[ -f pkg/PKGBUILD ] || die "pkg/PKGBUILD not found — run me from a niri-tablet clone"
-command -v git     >/dev/null 2>&1 || die "git not found"
-command -v makepkg >/dev/null 2>&1 || die "makepkg not found — install base-devel first (pacman -S base-devel)"
-command -v pacman  >/dev/null 2>&1 || die "pacman not found — this updater is Arch-only"
-
-hdr "niri-tablet updater"
-
-git fetch origin --tags --quiet ||
-    die "git fetch failed — check your network and the clone's origin remote"
 
 if [ "$DO_MAIN" = 1 ]; then
     TARGET=main
@@ -304,8 +338,10 @@ elif [ "$UP_TO_DATE" = 1 ]; then
     else
         ok "already up to date ($TARGET) — nothing to do"
         say "    $DIM--force rebuilds anyway; --main tracks the development branch$N"
-        check_config_rename
-        build_easysetup
+        if [ "$CHECK" != 1 ]; then
+            check_config_rename
+            build_easysetup
+        fi
         exit 0
     fi
 else
