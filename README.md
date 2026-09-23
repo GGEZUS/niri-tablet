@@ -55,6 +55,8 @@ accepts (the running compositor confirms the reload). Build with
 `cargo build --release`; details in the
 [EasySetup wiki page](https://github.com/GGEZUS/niri-tablet/wiki/EasySetup).
 
+![easysetup](https://raw.githubusercontent.com/GGEZUS/niri-tablet/main/demo/easysetup.webp)
+
 ### Hold-swipe: move windows
 
 Rest three (or more) fingers still for a moment (~400ms), then swipe: instead
