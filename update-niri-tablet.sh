@@ -198,15 +198,23 @@ build_easysetup() {
     ES_DESKTOP=$ES_DATA/com.github.ggezus.NiriTabletEasySetup.desktop
     ES_ICON=$ES_DATA/icons/hicolor/scalable/apps/com.github.ggezus.NiriTabletEasySetup.svg
     XDG_DATA=${XDG_DATA_HOME:-$HOME/.local/share}
+    # The installed entry gets ABSOLUTE Exec/TryExec paths. Launchers are
+    # often started by the systemd user manager, whose PATH has no
+    # ~/.local/bin: bare names resolve as dead there (Surface bug,
+    # 2026-09-23). The repo file keeps bare names; only the installed
+    # copy is rewritten.
     if [ -x "$ES_BIN" ] && [ -f "$ES_DESKTOP" ] && [ -f "$ES_ICON" ] &&
        mkdir -p "$HOME/.local/bin" &&
        ln -sfn "$ES_BIN" "$HOME/.local/bin/niri-tablet-easysetup" &&
-       install -Dm644 "$ES_DESKTOP" "$XDG_DATA/applications/com.github.ggezus.NiriTabletEasySetup.desktop" &&
+       mkdir -p "$XDG_DATA/applications" &&
+       sed -e "s|^Exec=niri-tablet-easysetup\$|Exec=$HOME/.local/bin/niri-tablet-easysetup|" \
+           -e "s|^TryExec=niri-tablet-easysetup\$|TryExec=$HOME/.local/bin/niri-tablet-easysetup|" \
+           "$ES_DESKTOP" > "$XDG_DATA/applications/com.github.ggezus.NiriTabletEasySetup.desktop" &&
        install -Dm644 "$ES_ICON" "$XDG_DATA/icons/hicolor/scalable/apps/com.github.ggezus.NiriTabletEasySetup.svg"; then
         ok "EasySetup launcher entry installed (niri logo icon): $XDG_DATA/applications"
         case ":$PATH:" in
             *":$HOME/.local/bin:"*) ;;
-            *) say "    $DIM(~/.local/bin is not on your PATH yet — re-login once and 'niri-tablet-easysetup' works by name)$N" ;;
+            *) say "    $DIM(launcher entry uses absolute paths; re-login once to also launch by name in a shell)$N" ;;
         esac
     else
         warn "could not install the EasySetup launcher entry — see the EasySetup wiki page for the manual steps"
