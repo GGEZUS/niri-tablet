@@ -258,11 +258,15 @@ fn build_apps_group(state: &SharedState, ui: &SharedUi, slot: Slot, dialog: &adw
             });
         }
         items.push(Searchable {
-            row,
+            row: row.clone(),
             haystack: format!("{} {}", app.name, app.argv.join(" ")).to_lowercase(),
         });
+        group.add(&row);
     }
-    groups.push(Group { group, items });
+    // Don't show an empty header on systems with no scannable apps.
+    if !items.is_empty() {
+        groups.push(Group { group, items });
+    }
 }
 
 fn build_catalog_groups(
