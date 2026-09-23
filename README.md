@@ -163,8 +163,9 @@ cd niri-tablet
 ```
 
 It fetches the latest release, builds it (the `sudo` prompt for the
-install comes from `makepkg`), and pins `IgnorePkg = niri` in
-`/etc/pacman.conf` if that pin is missing. Manual equivalent:
+install comes from `makepkg`), pins `IgnorePkg = niri` in
+`/etc/pacman.conf` if that pin is missing, and builds the EasySetup GUI
+(no sudo). Manual equivalent:
 
 ```bash
 cd niri-tablet/pkg
@@ -254,7 +255,7 @@ whenever its sources changed (a plain cargo build, no sudo).
 Useful flags: `--check` reports without
 touching anything, `--force` rebuilds an up-to-date install,
 `--tag vX.Y.Z` picks a specific release, `--main` tracks the development
-branch. The manual equivalent:
+branch, `--yes` skips prompts for non-interactive runs. The manual equivalent:
 
 ```bash
 git pull
@@ -311,6 +312,7 @@ scripts/   OSK toggle + auto-rotate helpers
 config/    example niri config fragments
 demo/      demo videos embedded above
 extras/    optional extras (wvkbd build with mobile layouts)
+bugreports/ evidence captures for fixed bugs (issue #2, phantom-touch)
 niri-tablet-easysetup/   GUI gesture configurator (GTK4)
 test.kdl   minimal config for nested (in-window) testing
 niri/      maintainer's dev clone for rebasing (not part of the repo)
