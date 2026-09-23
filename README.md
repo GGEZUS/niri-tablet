@@ -2,7 +2,7 @@
 
 Tablet support for [niri](https://github.com/niri-wm/niri): multi-finger
 touchscreen gestures, an on-screen keyboard that adapts to screen orientation,
-and automatic display rotation — everything needed to run a niri session with
+and automatic display rotation: everything needed to run a niri session with
 the keyboard detached.
 
 ![demo](https://raw.githubusercontent.com/GGEZUS/niri-tablet/main/demo/demo.webp)
@@ -61,7 +61,7 @@ accepts (the running compositor confirms the reload). Build with
 
 Rest three (or more) fingers still for a moment (~400ms), then swipe: instead
 of the animated view scroll, the dominant direction runs a discrete action.
-The example config binds it to window management — held swipe left/right
+The example config binds it to window management: held swipe left/right
 moves the focused column (`move-column-left`/`right`, like Ctrl+Mod+arrows),
 held swipe up/down moves the focused window to the workspace above/below
 (`move-window-to-workspace-up`/`down`). Quick swipes are unaffected: how long
@@ -74,13 +74,13 @@ From the moment `touchscreen-swipe.fingers` fingers are down, the whole touch
 sequence belongs to the compositor: apps never see it (touches they already
 received are cancelled), and normal delivery resumes when the last finger
 lifts. So a 3-finger swipe doesn't pinch-zoom a browser or drag-select
-terminal text mid-gesture. Single- and two-finger input — including app
-pinch-zoom — is untouched. If an app genuinely needs 3-finger touches, raise
+terminal text mid-gesture. Single- and two-finger input, including app
+pinch-zoom, is untouched. If an app genuinely needs 3-finger touches, raise
 `fingers`.
 
 ### Touch point visualization
 
-`show-touch-points` renders translucent dots that follow your fingers —
+`show-touch-points` renders translucent dots that follow your fingers,
 drawn by the compositor itself, so any screen recording captures them and
 input is never touched. Meant for demo videos and for debugging gestures:
 
@@ -126,7 +126,7 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 20 patches (`git am`-able, authorship
+- **`pkg/`** - the Arch PKGBUILD plus the 20 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated multi-finger
   swipes reusing niri's touchpad gesture pipeline, taps and discrete
   flicks at one finger more than the base count (3 or 4), hold-swipes,
@@ -138,10 +138,10 @@ maintains a small patch series on top of a current niri release:
   mid-gesture (hotplug/unplug no longer wedges the session), and opt-in
   gesture event logging for bug reports. The animated
   swipes run through the same spring-physics
-  pipeline as touchpad gestures — rotation-proof logical coordinates, live
+  pipeline as touchpad gestures: rotation-proof logical coordinates, live
   follow, inertia.
-- **`config/gestures.kdl`** — the gesture config block (see above).
-- **`scripts/`** — OSK toggle + auto-rotate helpers (work on stock niri too).
+- **`config/gestures.kdl`** - the gesture config block (see above).
+- **`scripts/`** - OSK toggle + auto-rotate helpers (work on stock niri too).
 
 The base swipe implementation comes from
 [niri-touch-gestures](https://github.com/pir0c0pter0/niri-touch-gestures) by
@@ -153,7 +153,7 @@ when that lands, this patchset can be retired.
 
 ## Install (Arch Linux)
 
-Easiest — the bundled updater handles first installs too:
+The easiest path is the bundled updater (it handles first installs too):
 
 ```bash
 git clone https://github.com/GGEZUS/niri-tablet.git
@@ -176,8 +176,8 @@ Then protect it from repo updates in `/etc/pacman.conf`:
 IgnorePkg = niri
 ```
 
-pacman will ask to remove stock niri (`Remove niri? [y/N]` — the default is
-N) — answer **y**; with N the install simply aborts. `niri-tablet` provides
+pacman will ask to remove stock niri (`Remove niri? [y/N]`, default N):
+answer **y**; with N the install simply aborts. `niri-tablet` provides
 and conflicts with `niri`, so the swap itself is automatic.
 Needs `rust`, `cargo`, `clang` and `git` to build. First build takes a while;
 the PKGBUILD shares a cargo target dir (`~/.cache/niri-tablet-target`) so
@@ -185,9 +185,9 @@ rebuilds are incremental.
 
 After a re-login, `niri --version` prints `26.04 (v26.04-modified)`: the
 patchset applies uncommitted on top of the release tag, so git-describe
-reports that rather than the pkgver's `26.04.6…`. The positive check that
+reports that rather than the pkgver's `26.04.20…`. The positive check that
 the patched binary is running: `niri validate` accepts a `gestures {}`
-block — stock niri rejects the unknown node.
+block; stock niri rejects the unknown node.
 
 ## NixOS
 
@@ -218,7 +218,7 @@ in
 
 ## Other distros
 
-The patchset is plain `git`/`patch` + cargo — nothing Arch-specific in it:
+The patchset is plain `git`/`patch` + cargo, nothing Arch-specific in it:
 
 ```bash
 git clone https://github.com/niri-wm/niri
@@ -229,7 +229,7 @@ cargo build --release      # binary lands in target/release/niri
 ```
 
 You need `rust`, `cargo` and `clang` plus the system libraries niri links
-against — the PKGBUILD's `depends` list doubles as the checklist (pipewire,
+against; the PKGBUILD's `depends` list doubles as the checklist (pipewire,
 libinput, libudev, libdisplay-info, libxkbcommon, seatd, …). `cargo test
 touch_` runs the unit tests. The helpers in `scripts/` and the config
 fragment in `config/` are distro-agnostic (POSIX sh + python3); off-Arch,
@@ -264,38 +264,38 @@ makepkg -si        # incremental: the shared target dir is reused
 `update-niri-tablet.sh` at the repo root is the user-facing updater;
 `update.sh` and `install.sh` are maintainer scripts (they rebase and
 regenerate the patch series against a dev clone of niri). After a big Rust
-toolchain jump, deleting `~/.cache/niri-tablet-target` is harmless — the
+toolchain jump, deleting `~/.cache/niri-tablet-target` is harmless: the
 next build is just a slow cold one again.
 
 ## On-screen keyboard + auto-rotation (optional, works on stock niri too)
 
-Two independent helpers — take either, both, or neither:
+Two independent helpers: take either, both, or neither:
 
 ```bash
-# OSK — any touchscreen device, no sensors involved
+# OSK: any touchscreen device, no sensors involved
 cp scripts/niri-osk.sh ~/.local/bin/
 
-# auto-rotate — only for devices with an accelerometer
+# auto-rotate: only for devices with an accelerometer
 cp scripts/niri-rotate.sh ~/.local/bin/
 cp scripts/niri-rotate.service ~/.config/systemd/user/
 systemctl --user enable --now niri-rotate.service
 ```
 
-- **`niri-osk.sh`** — toggles [wvkbd](https://git.sr.ht/~proycon/wvkbd); install
+- **`niri-osk.sh`** - toggles [wvkbd](https://git.sr.ht/~proycon/wvkbd); install
   the AUR package **`wvkbd-git`**, which provides the `wvkbd-deskintl` binary
   (`python3` parses the output transform). Reads the transform from niri
   itself (not from sensors): doubles the keyboard height in portrait and
   flips the xkb layout group if you use a two-group layout like `"pt,us"`
   (the OSK is US-labelled; with a single-group layout the flip is a no-op,
   so a US-only machine needs nothing special).
-- **`niri-rotate.sh`** — follows the accelerometer via
+- **`niri-rotate.sh`** - follows the accelerometer via
   [iio-sensor-proxy](https://github.com/hadess/iio-sensor-proxy) and sets
   `niri msg output <name> transform` as the tablet turns; resizes a running
   keyboard. On 2-in-1s it only rotates in tablet mode: ThinkPad and HP
   convertibles are detected automatically, `NIRI_ROTATE_TABLET_MODE_SYSFS`
   points it at another vendor's switch file, and
   `NIRI_ROTATE_TABLET_MODE_ONLY=no` turns the check off. Only useful with a
-  real accelerometer — check yours with
+  real accelerometer; check yours with
   `monitor-sensor` (after starting `iio-sensor-proxy.service`); many touch
   laptops have none, in which case skip it: nothing else depends on it.
 
@@ -308,10 +308,11 @@ pkg/       Arch PKGBUILD + the patch series against upstream niri
 update-niri-tablet.sh   user-facing updater (install/update/pin)
 scripts/   OSK toggle + auto-rotate helpers
 config/    example niri config fragments
+demo/      demo videos embedded above
 extras/    optional extras (wvkbd build with mobile layouts)
 niri-tablet-easysetup/   GUI gesture configurator (GTK4)
 test.kdl   minimal config for nested (in-window) testing
-niri/      maintainer's dev clone for rebasing — not part of the repo
+niri/      maintainer's dev clone for rebasing (not part of the repo)
 ```
 
 ## Tested hardware
@@ -324,7 +325,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 - Patchset: `v26.04 + 20 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
-  deadlock) — actions are deferred via `Niri::pending_touch_action`.
+  deadlock); actions are deferred via `Niri::pending_touch_action`.
 
 License: **GPL-3.0-only** (the patches modify niri, also GPL-3.0-only).
 Swipe foundation by Mario St Jr; taps, flicks, fixes, scripts and packaging
