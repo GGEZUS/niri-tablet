@@ -253,7 +253,9 @@ version, builds and installs the package, and re-checks the
 renamed gesture nodes and offers to migrate them (dated backups; undone
 unless `niri validate` passes). The GUI configurator is rebuilt too,
 whenever its sources changed (a plain cargo build, no sudo), and its
-launcher entry and icon are kept installed.
+launcher entry and icon are kept installed. The updater refreshes
+itself from origin/main at startup, so fixes to it don't wait for a
+release tag.
 Useful flags: `--check` reports without
 touching anything, `--force` rebuilds an up-to-date install,
 `--tag vX.Y.Z` picks a specific release, `--main` tracks the development
