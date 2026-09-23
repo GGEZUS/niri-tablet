@@ -14,7 +14,9 @@
 #   ./update-niri-tablet.sh --yes        no prompts (needs stdin TTY otherwise)
 #
 # After installing, it also checks ~/.config/niri for nodes the new build
-# rejects (the v26.04.20 gesture rename) and offers to migrate them.
+# rejects (the v26.04.20 gesture rename) and offers to migrate them, and
+# rebuilds niri-tablet-easysetup (the GUI configurator) when its sources
+# changed — a plain cargo build, no sudo.
 #
 # The other root scripts are maintainer-only (they need a dev clone of niri):
 # update.sh rebases onto new upstream releases, install.sh rebuilds as-is.
@@ -154,6 +156,36 @@ check_config_rename() {
     fi
 }
 
+# ── niri-tablet-easysetup (the GUI configurator) ───────────────────
+# Not part of the package: rebuild it whenever its sources are newer
+# than the binary (or there is no binary yet), so updates keep the GUI
+# current without anyone remembering to run cargo by hand. No-op when
+# already current (cargo's own staleness check is cheap).
+build_easysetup() {
+    ES_DIR=$ROOT/niri-tablet-easysetup
+    [ -f "$ES_DIR/Cargo.toml" ] || return 0
+    ES_BIN=$ES_DIR/target/release/niri-tablet-easysetup
+    if [ -x "$ES_BIN" ] &&
+       [ -z "$(find "$ES_DIR/src" "$ES_DIR/Cargo.toml" "$ES_DIR/Cargo.lock" \
+              -newer "$ES_BIN" -print -quit 2>/dev/null)" ]; then
+        return 0
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        warn "cargo not found — skipped niri-tablet-easysetup (the gesture GUI)"
+        say "      $DIM(build it later: cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
+        return 0
+    fi
+    hdr "building niri-tablet-easysetup (the gesture GUI)"
+    say "  $DIM(a plain cargo build, no sudo; the first build takes a couple of minutes)$N"
+    if cargo build --release --manifest-path "$ES_DIR/Cargo.toml"; then
+        ok "niri-tablet-easysetup built: $ES_BIN"
+        say "    $DIM(symlink it into ~/.local/bin to launch by name — the wiki's EasySetup page has the steps)$N"
+    else
+        warn "the easysetup build failed — the niri package above is unaffected; retry with"
+        say "      $DIM(cargo build --release --manifest-path niri-tablet-easysetup/Cargo.toml)$N"
+    fi
+}
+
 # ── args ───────────────────────────────────────────────────────────
 CHECK=0; FORCE=0; ASSUME_YES=0; DO_MAIN=0; TARGET=''
 while [ $# -gt 0 ]; do
@@ -252,6 +284,7 @@ elif [ "$UP_TO_DATE" = 1 ]; then
         ok "already up to date ($TARGET) — nothing to do"
         say "    $DIM--force rebuilds anyway; --main tracks the development branch$N"
         check_config_rename
+        build_easysetup
         exit 0
     fi
 else
@@ -316,7 +349,8 @@ if ! grep -E '^[[:space:]]*IgnorePkg([[:space:]]|=)' /etc/pacman.conf | grep -qw
     fi
 fi
 
-# ── config rename check (no-op unless old names / bad fingers) ─────
+# ── easysetup + config rename check ─────────────────────────────────
+build_easysetup
 check_config_rename
 
 # ── done ───────────────────────────────────────────────────────────

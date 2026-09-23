@@ -248,7 +248,9 @@ It fetches the latest release tag, shows the changelog since your installed
 version, builds and installs the package, and re-checks the
 `IgnorePkg = niri` pin. After v26.04.20 it also checks your config for the
 renamed gesture nodes and offers to migrate them (dated backups; undone
-unless `niri validate` passes). Useful flags: `--check` reports without
+unless `niri validate` passes). The GUI configurator is rebuilt too,
+whenever its sources changed (a plain cargo build, no sudo).
+Useful flags: `--check` reports without
 touching anything, `--force` rebuilds an up-to-date install,
 `--tag vX.Y.Z` picks a specific release, `--main` tracks the development
 branch. The manual equivalent:
