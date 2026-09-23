@@ -29,6 +29,8 @@ impl Slot {
             Slot::TapMore => "tap-more",
             Slot::SwipeMoreUp => "swipe-more-up",
             Slot::SwipeMoreDown => "swipe-more-down",
+            Slot::SwipeMoreLeft => "swipe-more-left",
+            Slot::SwipeMoreRight => "swipe-more-right",
             Slot::HoldLeft => "hold-left",
             Slot::HoldRight => "hold-right",
             Slot::HoldUp => "hold-up",

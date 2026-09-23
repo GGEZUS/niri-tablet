@@ -53,6 +53,8 @@ pub enum Slot {
     TapMore,
     SwipeMoreUp,
     SwipeMoreDown,
+    SwipeMoreLeft,
+    SwipeMoreRight,
     HoldLeft,
     HoldRight,
     HoldUp,
@@ -68,11 +70,13 @@ pub enum Slot {
 }
 
 impl Slot {
-    pub const ALL: [Slot; 16] = [
+    pub const ALL: [Slot; 18] = [
         Slot::Tap,
         Slot::TapMore,
         Slot::SwipeMoreUp,
         Slot::SwipeMoreDown,
+        Slot::SwipeMoreLeft,
+        Slot::SwipeMoreRight,
         Slot::HoldLeft,
         Slot::HoldRight,
         Slot::HoldUp,
@@ -94,6 +98,8 @@ impl Slot {
             Slot::TapMore => "tap-more",
             Slot::SwipeMoreUp => "swipe-more-up",
             Slot::SwipeMoreDown => "swipe-more-down",
+            Slot::SwipeMoreLeft => "swipe-more-left",
+            Slot::SwipeMoreRight => "swipe-more-right",
             Slot::HoldLeft => "left",
             Slot::HoldRight => "right",
             Slot::HoldUp => "up",
@@ -115,6 +121,8 @@ impl Slot {
             Slot::TapMore => "extra-finger tap",
             Slot::SwipeMoreUp => "extra-finger flick up",
             Slot::SwipeMoreDown => "extra-finger flick down",
+            Slot::SwipeMoreLeft => "extra-finger flick left",
+            Slot::SwipeMoreRight => "extra-finger flick right",
             Slot::HoldLeft => "Hold + swipe left",
             Slot::HoldRight => "Hold + swipe right",
             Slot::HoldUp => "Hold + swipe up",
@@ -136,6 +144,8 @@ impl Slot {
             Slot::TapMore => "Quick tap with one finger more than the base count",
             Slot::SwipeMoreUp => "Fast flick with one finger more than the base count, upward",
             Slot::SwipeMoreDown => "Fast flick with one finger more than the base count, downward",
+            Slot::SwipeMoreLeft => "Fast flick with one finger more than the base count, leftward",
+            Slot::SwipeMoreRight => "Fast flick with one finger more than the base count, rightward",
             Slot::HoldLeft => "Touch down, hold ~400 ms, then swipe left",
             Slot::HoldRight => "Touch down, hold ~400 ms, then swipe right",
             Slot::HoldUp => "Touch down, hold ~400 ms, then swipe up",
@@ -399,6 +409,8 @@ impl GestureModel {
                 "tap-more" => model.set(Slot::TapMore, slot_action(child)),
                 "swipe-more-up" => model.set(Slot::SwipeMoreUp, slot_action(child)),
                 "swipe-more-down" => model.set(Slot::SwipeMoreDown, slot_action(child)),
+                "swipe-more-left" => model.set(Slot::SwipeMoreLeft, slot_action(child)),
+                "swipe-more-right" => model.set(Slot::SwipeMoreRight, slot_action(child)),
                 // Legacy names from release v26.04.18 and earlier: read as
                 // their renamed slots (the new name wins if both appear) and
                 // migrate away on save.
@@ -503,6 +515,8 @@ impl GestureModel {
             (Slot::TapMore, "tap-more"),
             (Slot::SwipeMoreDown, "swipe-more-down"),
             (Slot::SwipeMoreUp, "swipe-more-up"),
+            (Slot::SwipeMoreLeft, "swipe-more-left"),
+            (Slot::SwipeMoreRight, "swipe-more-right"),
         ] {
             if let Some(node) = slot_node(self.get(slot)) {
                 let mut n = Node::new(parent);
@@ -671,6 +685,10 @@ mod tests {
         );
         assert_eq!(m.get(Slot::EdgeBottom), &ActionValue::spawn_sh("~/.local/bin/niri-osk.sh"));
         assert_eq!(m.get(Slot::CornerTopLeft), &ActionValue::None);
+        // The horizontal flicks ship unbound; only the examples are commented
+        // in the shipped config.
+        assert_eq!(m.get(Slot::SwipeMoreLeft), &ActionValue::None);
+        assert_eq!(m.get(Slot::SwipeMoreRight), &ActionValue::None);
         assert_eq!(m.options.fingers, Some(3));
         assert_eq!(m.options.horizontal_swipe, HorizontalSwipe::ResizeColumn);
         assert_eq!(m.options.show_touch_points, ShowTouchPoints::Gestures);
@@ -741,6 +759,24 @@ mod tests {
         assert_eq!(m.slots, back.slots);
         assert_eq!(m.passthrough, back.passthrough);
         assert!(back.warnings.is_empty(), "{:?}", back.warnings);
+    }
+
+    #[test]
+    fn swipe_more_left_right_round_trip() {
+        let src = "gestures {\n    touchscreen-swipe {\n        swipe-more-left { focus-column-left; }\n        swipe-more-right { focus-column-right; }\n    }\n}\n";
+        let m = GestureModel::parse_file_text(src).unwrap().unwrap();
+        assert_eq!(
+            m.get(Slot::SwipeMoreLeft),
+            &ActionValue::simple("focus-column-left")
+        );
+        assert_eq!(
+            m.get(Slot::SwipeMoreRight),
+            &ActionValue::simple("focus-column-right")
+        );
+        let text = m.to_file_text();
+        assert!(text.contains("swipe-more-left"), "{text}");
+        assert!(text.contains("swipe-more-right"), "{text}");
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
     }
 
     #[test]

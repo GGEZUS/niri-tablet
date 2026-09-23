@@ -233,7 +233,7 @@ pub fn refresh(state: &SharedState, ui: &SharedUi) {
         ));
         ui.more_group.set_title(&format!("{}-finger gestures", n + 1));
         ui.more_group.set_description(Some(&format!(
-            "Tap and vertical flicks at one finger more than the base; they take priority over the {n}-finger tap. Leave a bind unset to fall back to the {n}-finger tap or the vertical drag"
+            "Tap and flicks at one finger more than the base; they take priority over the {n}-finger gestures. Leave a bind unset to fall back to the {n}-finger tap or the animated drags"
         )));
         let subtitle = match &s.discovery.source {
             Source::ManagedFile(p) | Source::ManagedFileAmbiguous(p, _) => p.display().to_string(),
@@ -597,6 +597,8 @@ fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut Hash
             Slot::TapMore => "Tap",
             Slot::SwipeMoreUp => "Flick up",
             Slot::SwipeMoreDown => "Flick down",
+            Slot::SwipeMoreLeft => "Flick left",
+            Slot::SwipeMoreRight => "Flick right",
             other => other.friendly_name(),
         }
     }
@@ -655,7 +657,13 @@ fn build_gesture_groups(content: &gtk::Box, state: &SharedState, rows: &mut Hash
     // Title/description are set by refresh() from the current count.
     let g4 = adw::PreferencesGroup::new();
     content.append(&g4);
-    for slot in [Slot::TapMore, Slot::SwipeMoreUp, Slot::SwipeMoreDown] {
+    for slot in [
+        Slot::TapMore,
+        Slot::SwipeMoreUp,
+        Slot::SwipeMoreDown,
+        Slot::SwipeMoreLeft,
+        Slot::SwipeMoreRight,
+    ] {
         let (row, summary, test_btn) = gesture_row(slot, row_title(slot));
         g4.add(&row);
         rows.insert(slot, (row, summary, test_btn));
