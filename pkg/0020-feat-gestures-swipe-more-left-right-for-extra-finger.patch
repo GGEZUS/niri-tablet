@@ -1,0 +1,174 @@
+From ef77de001a487749159fcc040dbdcf7b88039158 Mon Sep 17 00:00:00 2001
+From: GGEZUS <coelho.b.ricardo@gmail.com>
+Date: Wed, 23 Sep 2026 01:58:18 +0100
+Subject: [PATCH 20/20] feat(gestures): swipe-more-left/right for extra-finger
+ flicks
+
+Quick horizontal swipes with one finger more than touchscreen-swipe.fingers
+can now run a discrete action, mirroring the vertical swipe-more-up/down.
+Unset, they keep the base horizontal-swipe behavior (move-view or
+resize-column), so existing configs are unchanged.
+---
+ docs/wiki/Configuration:-Gestures.md |  6 ++++++
+ niri-config/src/gestures.rs          | 20 +++++++++++++++++++
+ niri-config/src/lib.rs               |  6 ++++++
+ src/input/mod.rs                     | 29 ++++++++++++++++++----------
+ 4 files changed, 51 insertions(+), 10 deletions(-)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 9353e147..72dd9689 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -37,6 +37,8 @@ gestures {
+         // tap-more { toggle-overview; }
+         // swipe-more-down { close-window; }
+         // swipe-more-up { spawn-sh "on-screen-keyboard"; }
++        // swipe-more-left { focus-column-left; }
++        // swipe-more-right { focus-column-right; }
+         // hold {
+         //     left { move-column-left; }
+         //     right { move-column-right; }
+@@ -178,6 +180,10 @@ The options are:
+ - `swipe-more-down` / `swipe-more-up`: discrete action for a quick vertical
+   swipe with one finger more than `fingers` (4 by default). Unset, such swipes
+   drive the workspace carousel.
++- `swipe-more-left` / `swipe-more-right`: discrete action for a quick horizontal
++  swipe with one finger more than `fingers` (4 by default). Unset, such swipes
++  keep the `horizontal-swipe` behavior (move the view, or resize the focused
++  column).
+ - `hold { left/right/up/down { ... } }`: discrete actions for held swipes:
+   fingers resting still for a moment (~400ms) before swiping. A direction left
+   unset falls back to the animated swipe.
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index 91f92cd2..fc285f72 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -206,6 +206,14 @@ pub struct TouchscreenSwipe {
+     /// (upward; 4 by default). When unset, such swipes drive the workspace
+     /// carousel.
+     pub swipe_more_up: Option<Action>,
++    /// Discrete action for a horizontal swipe with more fingers than `fingers`
++    /// (leftward; 4 by default). When unset, such swipes keep the base
++    /// horizontal-swipe behavior (move-view or resize-column).
++    pub swipe_more_left: Option<Action>,
++    /// Discrete action for a horizontal swipe with more fingers than `fingers`
++    /// (rightward; 4 by default). When unset, such swipes keep the base
++    /// horizontal-swipe behavior (move-view or resize-column).
++    pub swipe_more_right: Option<Action>,
+     /// Discrete actions for held swipes: fingers resting still for a moment
+     /// before moving past the swipe threshold. A direction left unset falls
+     /// back to the animated swipe for that direction.
+@@ -222,6 +230,8 @@ impl Default for TouchscreenSwipe {
+             tap_more: None,
+             swipe_more_down: None,
+             swipe_more_up: None,
++            swipe_more_left: None,
++            swipe_more_right: None,
+             hold: TouchscreenSwipeHold::default(),
+         }
+     }
+@@ -309,6 +319,10 @@ pub struct TouchscreenSwipePart {
+     #[knuffel(child)]
+     pub swipe_more_up: Option<TouchscreenTap>,
+     #[knuffel(child)]
++    pub swipe_more_left: Option<TouchscreenTap>,
++    #[knuffel(child)]
++    pub swipe_more_right: Option<TouchscreenTap>,
++    #[knuffel(child)]
+     pub hold: Option<TouchscreenSwipeHoldPart>,
+ }
+ 
+@@ -333,6 +347,12 @@ impl MergeWith<TouchscreenSwipePart> for TouchscreenSwipe {
+         if let Some(a) = &part.swipe_more_up {
+             self.swipe_more_up = Some(a.action.clone());
+         }
++        if let Some(a) = &part.swipe_more_left {
++            self.swipe_more_left = Some(a.action.clone());
++        }
++        if let Some(a) = &part.swipe_more_right {
++            self.swipe_more_right = Some(a.action.clone());
++        }
+         if let Some(hold) = &part.hold {
+             self.hold.merge_with(hold);
+         }
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 2f1e3c02..17faf06d 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -762,6 +762,8 @@ mod tests {
+                     tap { focus-column-left; }
+                     tap-more { toggle-overview; }
+                     swipe-more-down { close-window; }
++                    swipe-more-left { focus-column-left; }
++                    swipe-more-right { focus-column-right; }
+                 }
+             }
+             "#,
+@@ -772,6 +774,8 @@ mod tests {
+         assert_eq!(swipe.tap_more, Some(Action::ToggleOverview));
+         assert_eq!(swipe.swipe_more_down, Some(Action::CloseWindow));
+         assert_eq!(swipe.swipe_more_up, None);
++        assert_eq!(swipe.swipe_more_left, Some(Action::FocusColumnLeft));
++        assert_eq!(swipe.swipe_more_right, Some(Action::FocusColumnRight));
+ 
+         // Anything outside 3..=4 is a hard parse error.
+         for text in [
+@@ -1823,6 +1827,8 @@ mod tests {
+                     tap_more: None,
+                     swipe_more_down: None,
+                     swipe_more_up: None,
++                    swipe_more_left: None,
++                    swipe_more_right: None,
+                     hold: TouchscreenSwipeHold {
+                         left: None,
+                         right: None,
+diff --git a/src/input/mod.rs b/src/input/mod.rs
+index 467b94f2..599ed70c 100644
+--- a/src/input/mod.rs
++++ b/src/input/mod.rs
+@@ -4537,9 +4537,9 @@ impl State {
+                                 let fingers_cfg = usize::from(touchscreen_swipe.fingers);
+ 
+                                 // Discrete actions: a held swipe resolves to its
+-                                // `hold` direction binding; a quick vertical
+-                                // swipe with one finger more than `fingers` to
+-                                // swipe-more-up/down.
++                                // `hold` direction binding; a quick swipe with
++                                // one finger more than `fingers` to the
++                                // swipe-more-* node of its direction.
+                                 let discrete_action = if is_hold {
+                                     let hold = &touchscreen_swipe.hold;
+                                     match direction {
+@@ -4558,13 +4558,22 @@ impl State {
+                                             }
+                                         }
+                                     }
+-                                } else if fingers > fingers_cfg
+-                                    && direction == SwipeDirection::Vertical
+-                                {
+-                                    if delta_y > 0.0 {
+-                                        touchscreen_swipe.swipe_more_down.clone()
+-                                    } else {
+-                                        touchscreen_swipe.swipe_more_up.clone()
++                                } else if fingers > fingers_cfg {
++                                    match direction {
++                                        SwipeDirection::Vertical => {
++                                            if delta_y > 0.0 {
++                                                touchscreen_swipe.swipe_more_down.clone()
++                                            } else {
++                                                touchscreen_swipe.swipe_more_up.clone()
++                                            }
++                                        }
++                                        SwipeDirection::Horizontal => {
++                                            if delta_x < 0.0 {
++                                                touchscreen_swipe.swipe_more_left.clone()
++                                            } else {
++                                                touchscreen_swipe.swipe_more_right.clone()
++                                            }
++                                        }
+                                     }
+                                 } else {
+                                     None
+-- 
+2.55.0
+

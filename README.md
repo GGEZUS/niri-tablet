@@ -9,7 +9,7 @@ the keyboard detached.
 
 [![CI](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml/badge.svg)](https://github.com/GGEZUS/niri-tablet/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue)](LICENSE)
-[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2019%20patches-blueviolet)](#status--credits)
+[![niri base](https://img.shields.io/badge/niri-v26.04%20%2B%2020%20patches-blueviolet)](#status--credits)
 [![Last commit](https://img.shields.io/github/last-commit/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/commits/main)
 [![Stars](https://img.shields.io/github/stars/GGEZUS/niri-tablet)](https://github.com/GGEZUS/niri-tablet/stargazers)
 
@@ -33,6 +33,7 @@ any niri action, same as keybinds. Change the file as you see fit.
 | tap | window overview (niri's own, works with zero setup); prefer an app launcher? Noctalia, fuzzel, wofi and rofi lines sit commented in the config, ready to swap in |
 | flick down | close the focused window |
 | flick up | toggle the focused window fullscreen |
+| flick left / flick right | unbound by default: they fall back to the horizontal drag (resize/move-view); examples commented in the config |
 | **Edge swipes** | |
 | one finger, swiping up from the bottom edge | toggle the on-screen keyboard |
 | one finger, swiping down from the top edge | toggle the overview |
@@ -123,9 +124,9 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** — the Arch PKGBUILD plus the 19 patches (`git am`-able, authorship
+- **`pkg/`** — the Arch PKGBUILD plus the 20 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated multi-finger
-  swipes reusing niri's touchpad gesture pipeline, taps and discrete vertical
+  swipes reusing niri's touchpad gesture pipeline, taps and discrete
   flicks at one finger more than the base count (3 or 4), hold-swipes,
   gesture ownership (multi-finger touches are cancelled
   client-side so apps don't react to them), single-finger edge and corner
@@ -243,7 +244,7 @@ One command, from anywhere inside the clone:
 
 It fetches the latest release tag, shows the changelog since your installed
 version, builds and installs the package, and re-checks the
-`IgnorePkg = niri` pin. After v26.04.19 it also checks your config for the
+`IgnorePkg = niri` pin. After v26.04.20 it also checks your config for the
 renamed gesture nodes and offers to migrate them (dated backups; undone
 unless `niri validate` passes). Useful flags: `--check` reports without
 touching anything, `--force` rebuilds an up-to-date install,
@@ -316,7 +317,7 @@ niri/      maintainer's dev clone for rebasing — not part of the repo
 
 ## Status & credits
 
-- Patchset: `v26.04 + 19 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 20 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock) — actions are deferred via `Niri::pending_touch_action`.

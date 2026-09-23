@@ -1,7 +1,7 @@
 From 3c4551bf9d3f42413a2b91d72bb98044b9b43a36 Mon Sep 17 00:00:00 2001
 From: GGEZUS <coelho.b.ricardo@gmail.com>
 Date: Tue, 22 Sep 2026 19:40:10 +0100
-Subject: [PATCH 19/19] feat(gestures): derive the tap/flick tier from fingers
+Subject: [PATCH 19/20] feat(gestures): derive the tap/flick tier from fingers
 
 The tap-4/swipe-4-up/swipe-4-down nodes become tap-more/swipe-more-up/
 swipe-more-down and apply at one finger more than touchscreen-swipe.fingers

@@ -14,7 +14,7 @@
 #   ./update-niri-tablet.sh --yes        no prompts (needs stdin TTY otherwise)
 #
 # After installing, it also checks ~/.config/niri for nodes the new build
-# rejects (the v26.04.19 gesture rename) and offers to migrate them.
+# rejects (the v26.04.20 gesture rename) and offers to migrate them.
 #
 # The other root scripts are maintainer-only (they need a dev clone of niri):
 # update.sh rebases onto new upstream releases, install.sh rebuilds as-is.
@@ -43,7 +43,7 @@ ok()   { printf '  %s✓%s %s\n' "$G" "$N" "$*"; }
 warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
 die()  { printf '  %s✗%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
 
-# ── v26.04.19 gesture rename ───────────────────────────────────────
+# ── v26.04.20 gesture rename ───────────────────────────────────────
 # tap-4 / swipe-4-up / swipe-4-down became tap-more / swipe-more-up /
 # swipe-more-down, and `fingers` is now restricted to 3 or 4. Configs
 # from v26.04.18 or earlier that still use the old names fail to parse
@@ -79,7 +79,7 @@ check_config_rename() {
     done
     [ "$CFG_HITS" = 0 ] && [ "$CFG_FINGERS" = 0 ] && return 0
 
-    hdr "config check: the v26.04.19 gesture changes"
+    hdr "config check: the v26.04.20 gesture changes"
 
     if [ "$CFG_HITS" = 1 ]; then
         say "  The second-tier gesture nodes were renamed:"

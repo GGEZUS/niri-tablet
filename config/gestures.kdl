@@ -33,6 +33,12 @@ gestures {
         swipe-more-down { close-window; }
         swipe-more-up   { fullscreen-window; }                  // fullscreen on/off
 
+        // Extra-finger horizontal flicks, unbound by default: uncommented
+        // they leave those flicks on the horizontal drag above (resize or
+        // move-view). Examples:
+        // swipe-more-left { focus-column-left; }
+        // swipe-more-right { focus-column-right; }
+
         // Prefer an app launcher on the extra-finger tap? Comment out the
         // toggle-overview line above and uncomment ONE of these (or write
         // your own spawn):
