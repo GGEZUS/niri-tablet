@@ -286,7 +286,11 @@ systemctl --user enable --now niri-rotate.service
 - **`niri-rotate.sh`** — follows the accelerometer via
   [iio-sensor-proxy](https://github.com/hadess/iio-sensor-proxy) and sets
   `niri msg output <name> transform` as the tablet turns; resizes a running
-  keyboard. Only useful with a real accelerometer — check yours with
+  keyboard. On 2-in-1s it only rotates in tablet mode: ThinkPad and HP
+  convertibles are detected automatically, `NIRI_ROTATE_TABLET_MODE_SYSFS`
+  points it at another vendor's switch file, and
+  `NIRI_ROTATE_TABLET_MODE_ONLY=no` turns the check off. Only useful with a
+  real accelerometer — check yours with
   `monitor-sensor` (after starting `iio-sensor-proxy.service`); many touch
   laptops have none, in which case skip it: nothing else depends on it.
 
