@@ -51,8 +51,9 @@ Prefer picking actions over editing KDL? `niri-tablet-easysetup/` in the
 repo is a small GTK app that does exactly that: it loads your current
 scheme, offers installed apps and niri actions for every gesture, fires
 test runs through `niri msg`, and saves only what `niri validate`
-accepts (the running compositor confirms the reload). Build with
-`cargo build --release`; details in the
+accepts (the running compositor confirms the reload). On Arch,
+`update-niri-tablet.sh` builds it for you, first install included;
+elsewhere, `cargo build --release` inside the directory. Details in the
 [EasySetup wiki page](https://github.com/GGEZUS/niri-tablet/wiki/EasySetup).
 
 ![easysetup](https://raw.githubusercontent.com/GGEZUS/niri-tablet/main/demo/easysetup.webp)
