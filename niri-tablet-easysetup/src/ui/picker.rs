@@ -143,6 +143,7 @@ fn build_general_group(
     let unbind = adw::ActionRow::builder()
         .title("Unbind")
         .subtitle("leave this gesture with no action")
+        .activatable(true)
         .build();
     unbind.add_prefix(&gtk::Image::from_icon_name("list-remove-symbolic"));
     {
@@ -163,6 +164,7 @@ fn build_general_group(
     let cmd = adw::ActionRow::builder()
         .title("Run a command")
         .subtitle("spawn a program with arguments")
+        .activatable(true)
         .build();
     cmd.add_prefix(&gtk::Image::from_icon_name("utilities-terminal-symbolic"));
     {
@@ -185,6 +187,7 @@ fn build_general_group(
     let sh = adw::ActionRow::builder()
         .title("Run a shell command")
         .subtitle("spawn-sh: pipes one line through the shell (~ and || work)")
+        .activatable(true)
         .build();
     sh.add_prefix(&gtk::Image::from_icon_name("utilities-terminal-symbolic"));
     {
@@ -207,6 +210,7 @@ fn build_general_group(
     let custom = adw::ActionRow::builder()
         .title("Custom KDL")
         .subtitle("write the action node yourself (any niri action)")
+        .activatable(true)
         .build();
     custom.add_prefix(&gtk::Image::from_icon_name("text-x-generic-symbolic"));
     {
