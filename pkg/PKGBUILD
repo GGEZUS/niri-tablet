@@ -44,6 +44,7 @@ source=(
     '0018-docs-document-the-touchscreen-swipe-action-options.patch'
     '0019-feat-gestures-derive-the-tap-flick-tier-from-fingers.patch'
     '0020-feat-gestures-swipe-more-left-right-for-extra-finger.patch'
+    '0021-feat-input-extend-corner-swipe-zones-along-the-edges.patch'
 )
 sha256sums=(
     'SKIP'
@@ -67,6 +68,7 @@ sha256sums=(
     'ac92687df3e3e8bc4b86451159f40b11b967febbcbc842706a65f1728440d3fc'
     '31db31426ba08566862a3900f0c62a258cb51a7fc169c6e4e456690d2117f43a'
     '22d206b430c33fadedd63583e624bc712e2a0d1daa867894e2516e8ae4e3912b'
+    'd92462148f93c2b931ed754c1bbf4d373f6fe379a82c3c7bf0ff494f46b6097a'
 )
 # Keep debug symbols on purpose: a compositor panic takes the whole session
 # down, and the journal backtrace is only readable with them (~128 MB binary

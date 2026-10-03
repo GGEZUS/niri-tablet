@@ -128,7 +128,7 @@ niri has no native touchscreen gestures (see the upstream
 [discussion](https://github.com/niri-wm/niri/discussions/463)). This repo
 maintains a small patch series on top of a current niri release:
 
-- **`pkg/`** - the Arch PKGBUILD plus the 20 patches (`git am`-able, authorship
+- **`pkg/`** - the Arch PKGBUILD plus the 21 patches (`git am`-able, authorship
   preserved) sitting next to it, as makepkg requires: animated multi-finger
   swipes reusing niri's touchpad gesture pipeline, taps and discrete
   flicks at one finger more than the base count (3 or 4), hold-swipes,
@@ -329,7 +329,7 @@ niri/      maintainer's dev clone for rebasing (not part of the repo)
 
 ## Status & credits
 
-- Patchset: `v26.04 + 20 patches`, unit-tested (full suite runs in CI).
+- Patchset: `v26.04 + 21 patches`, unit-tested (full suite runs in CI).
 - One design note for anyone hacking on the gesture code: never run a niri
   action from inside a smithay touch-grab callback (seat touch mutex
   deadlock); actions are deferred via `Niri::pending_touch_action`.

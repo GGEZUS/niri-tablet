@@ -1,0 +1,217 @@
+From 685f67250b6469be33c2e55886085c85ec75b82c Mon Sep 17 00:00:00 2001
+From: cunninghamcard-bit
+ <269104167+cunninghamcard-bit@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 15:29:02 +0800
+Subject: [PATCH] feat(input): extend corner swipe zones along the edges
+
+Corner zones were only the 48px squares where two edge strips meet,
+about one fingertip, so corner swipes starting just outside the square
+ran the edge's action.
+
+Extend each corner zone along both edge strips to CORNER_ZONE_PX
+(150px) from the corner. A diagonal swipe there fires the corner; a
+straight one that never completes the corner still fires the edge strip
+it started in. The square itself keeps its behaviour.
+---
+ docs/wiki/Configuration:-Gestures.md |  7 +-
+ niri-config/src/gestures.rs          |  8 +--
+ src/input/touch_edge_swipe.rs        | 96 ++++++++++++++++++++++------
+ 3 files changed, 83 insertions(+), 28 deletions(-)
+
+diff --git a/docs/wiki/Configuration:-Gestures.md b/docs/wiki/Configuration:-Gestures.md
+index 72dd9689..88c9ce75 100644
+--- a/docs/wiki/Configuration:-Gestures.md
++++ b/docs/wiki/Configuration:-Gestures.md
+@@ -244,9 +244,10 @@ gestures {
+ <sup>Since: 26.04</sup>
+ 
+ Single-finger diagonal swipes that start at a screen corner: the corner zones are the
+-~48 logical pixel squares where two edge strips meet. A swipe must move inward by ~20
+-pixels on both axes — a mostly-straight swipe starting in a corner zone deliberately
+-triggers nothing, so the adjacent edges stay usable right up to the corner.
++edge strips within ~150 logical pixels of the corner. A swipe must move inward by ~20
++pixels on both axes. A straight swipe starting along an edge strip in a corner zone
++still runs that edge's action; one starting in the ~48 pixel square where both strips
++meet deliberately triggers nothing.
+ 
+ Corners win over edges when the touch starts within range of both. Each of `top-left`,
+ `top-right`, `bottom-left` and `bottom-right` takes any niri action; unbound corners are
+diff --git a/niri-config/src/gestures.rs b/niri-config/src/gestures.rs
+index fc285f72..54308f6d 100644
+--- a/niri-config/src/gestures.rs
++++ b/niri-config/src/gestures.rs
+@@ -513,10 +513,10 @@ impl MergeWith<TouchscreenEdgeSwipePart> for TouchscreenEdgeSwipe {
+ }
+ 
+ /// Actions for single-finger diagonal swipes that start within the corner
+-/// zone where two edge zones meet (a ~48 logical pixel square) and move
+-/// inward on both axes. Mostly-straight swipes that start in a corner zone
+-/// deliberately trigger nothing, so the adjacent edges stay usable up to the
+-/// corner.
++/// zone (the edge strips within ~150 logical pixels of the corner) and move
++/// inward on both axes. Straight swipes from a corner zone still fire the
++/// edge strip they started in, except in the ~48 pixel square where both
++/// strips meet.
+ ///
+ /// ```kdl
+ /// gestures {
+diff --git a/src/input/touch_edge_swipe.rs b/src/input/touch_edge_swipe.rs
+index a69ead2c..4b7cefbf 100644
+--- a/src/input/touch_edge_swipe.rs
++++ b/src/input/touch_edge_swipe.rs
+@@ -17,9 +17,13 @@ use smithay::utils::{Logical, Point, Rectangle, Serial};
+ use crate::niri::State;
+ 
+ /// How close to a screen edge (logical pixels) a touch must start to count as an edge swipe.
+-/// Corner zones are the `EDGE_ZONE_PX`-sided squares where two adjacent edge strips overlap.
+ const EDGE_ZONE_PX: f64 = 48.0;
+ 
++/// How far along an edge strip (logical pixels, from the adjacent edge) a corner zone reaches.
++/// A fingertip-sized `EDGE_ZONE_PX` square is too small to hit reliably; a corner swipe landing
++/// just outside it would otherwise fire the edge.
++const CORNER_ZONE_PX: f64 = 150.0;
++
+ /// Inward movement (logical pixels) required to trigger an edge swipe.
+ const TRIGGER_PX: f64 = 40.0;
+ 
+@@ -30,7 +34,7 @@ const TRIGGER_PX: f64 = 40.0;
+ const CORNER_TRIGGER_PX: f64 = TRIGGER_PX / 2.0;
+ 
+ /// The zone a single-finger swipe started in, relative to the output the touch landed on.
+-/// Corners win when the start is within `EDGE_ZONE_PX` of two adjacent edges.
++/// Corners win when the start is in an edge strip within `CORNER_ZONE_PX` of the adjacent edge.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum SwipeZone {
+     Bottom,
+@@ -47,23 +51,42 @@ impl SwipeZone {
+     /// Classify a start position against an output's global-logical geometry. Returns `None`
+     /// when the position is not in any edge zone. Corner zones take priority over edges;
+     /// within ties the order is deterministic (top row before bottom, left before right) —
+-    /// only relevant for outputs smaller than `2 * EDGE_ZONE_PX`.
++    /// only relevant for outputs smaller than `2 * CORNER_ZONE_PX`.
+     pub fn classify(pos: Point<f64, Logical>, geom: Rectangle<f64, Logical>) -> Option<Self> {
+-        let near_left = pos.x - geom.loc.x <= EDGE_ZONE_PX;
+-        let near_right = geom.loc.x + geom.size.w - pos.x <= EDGE_ZONE_PX;
+-        let near_top = pos.y - geom.loc.y <= EDGE_ZONE_PX;
+-        let near_bottom = geom.loc.y + geom.size.h - pos.y <= EDGE_ZONE_PX;
+-
+-        match (near_top, near_bottom, near_left, near_right) {
+-            (true, _, true, _) => Some(Self::TopLeft),
+-            (true, _, _, true) => Some(Self::TopRight),
+-            (_, true, true, _) => Some(Self::BottomLeft),
+-            (_, true, _, true) => Some(Self::BottomRight),
+-            (_, true, _, _) => Some(Self::Bottom),
+-            (true, _, _, _) => Some(Self::Top),
+-            (_, _, true, _) => Some(Self::Left),
+-            (_, _, _, true) => Some(Self::Right),
+-            (false, false, false, false) => None,
++        Self::classify_with_corner(pos, geom, CORNER_ZONE_PX)
++    }
++
++    fn classify_with_corner(
++        pos: Point<f64, Logical>,
++        geom: Rectangle<f64, Logical>,
++        corner_px: f64,
++    ) -> Option<Self> {
++        let left = pos.x - geom.loc.x;
++        let right = geom.loc.x + geom.size.w - pos.x;
++        let top = pos.y - geom.loc.y;
++        let bottom = geom.loc.y + geom.size.h - pos.y;
++        let corner = |a: f64, b: f64| {
++            (a <= EDGE_ZONE_PX && b <= corner_px) || (b <= EDGE_ZONE_PX && a <= corner_px)
++        };
++
++        if corner(top, left) {
++            Some(Self::TopLeft)
++        } else if corner(top, right) {
++            Some(Self::TopRight)
++        } else if corner(bottom, left) {
++            Some(Self::BottomLeft)
++        } else if corner(bottom, right) {
++            Some(Self::BottomRight)
++        } else if bottom <= EDGE_ZONE_PX {
++            Some(Self::Bottom)
++        } else if top <= EDGE_ZONE_PX {
++            Some(Self::Top)
++        } else if left <= EDGE_ZONE_PX {
++            Some(Self::Left)
++        } else if right <= EDGE_ZONE_PX {
++            Some(Self::Right)
++        } else {
++            None
+         }
+     }
+ 
+@@ -100,6 +123,9 @@ struct Tracked {
+     /// Zone classified at touch-down from the start position and output geometry; fixed for
+     /// the stroke.
+     zone: SwipeZone,
++    /// The edge strip the finger started in, when it started in a corner zone outside the
++    /// `EDGE_ZONE_PX` square: a straight swipe that doesn't complete the corner fires this edge.
++    edge: Option<SwipeZone>,
+     /// Whether the gesture already fired; further motion is ignored until the finger lifts.
+     latched: bool,
+ }
+@@ -125,10 +151,14 @@ impl EdgeSwipeTracker {
+             "touch_edge_swipe: tracking zone {zone:?} from ({:.0},{:.0})",
+             pos.x, pos.y
+         );
++        let edge = SwipeZone::classify_with_corner(pos, output_geom, EDGE_ZONE_PX).filter(|z| {
++            matches!(z, SwipeZone::Bottom | SwipeZone::Top | SwipeZone::Left | SwipeZone::Right)
++        });
+         self.tracked = Some(Tracked {
+             slot,
+             start: pos,
+             zone,
++            edge,
+             latched: false,
+         });
+         Some(zone)
+@@ -144,10 +174,13 @@ impl EdgeSwipeTracker {
+         let dx = pos.x - tracked.start.x;
+         let dy = pos.y - tracked.start.y;
+ 
+-        if tracked.zone.triggered(dx, dy) {
++        let fired = Some(tracked.zone)
++            .filter(|z| z.triggered(dx, dy))
++            .or(tracked.edge.filter(|z| z.triggered(dx, dy)));
++        if let Some(zone) = fired {
+             tracked.latched = true;
+-            debug!("touch_edge_swipe: {:?} swipe triggered", tracked.zone);
+-            return Some(tracked.zone);
++            debug!("touch_edge_swipe: {zone:?} swipe triggered");
++            return Some(zone);
+         }
+ 
+         None
+@@ -416,6 +449,27 @@ mod tests {
+         assert_eq!(tracker.touch_motion(slot(0), pt(25.0, 1000.0)), None);
+     }
+ 
++    #[test]
++    fn swipe_beside_corner_resolves_by_angle() {
++        // Starts in the bottom strip 100px from the left edge, outside the EDGE_ZONE_PX
++        // square: a diagonal swipe fires the corner.
++        let g = geom(0., 0., 1000., 1280.);
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(100.0, 1270.0), g);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(125.0, 1240.0)),
++            Some(SwipeZone::BottomLeft)
++        );
++
++        // A straight swipe from the same spot still fires the edge.
++        let mut tracker = EdgeSwipeTracker::default();
++        tracker.touch_down(slot(0), pt(100.0, 1270.0), g);
++        assert_eq!(
++            tracker.touch_motion(slot(0), pt(110.0, 1225.0)),
++            Some(SwipeZone::Bottom)
++        );
++    }
++
+     #[test]
+     fn corner_zone_wins_over_edges() {
+         assert_eq!(
+-- 
+2.56.0
+
